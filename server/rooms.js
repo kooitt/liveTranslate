@@ -56,8 +56,9 @@ function closeRoom(room) {
 }
 
 /** Wires a host's mic WebSocket to fan its audio into every active language session. */
-export function attachHost(room, ws) {
+export function attachHost(room, ws, sampleRate) {
   room.hostSocket = ws;
+  room.sampleRate = sampleRate || 16000; // the mic's actual rate, not an assumption — see host.ts
   ws.on("message", (data, isBinary) => {
     if (!isBinary) return; // ignore any stray control/text frames
     room.audioBytesReceived += data.length;
@@ -76,6 +77,7 @@ export function joinListener(room, langCode, ws, apiKey) {
     entry.session = openSonioxSession({
       apiKey,
       targetLanguage: langCode,
+      sampleRate: room.sampleRate || 16000,
       languageHints: room.sourceLanguage ? [room.sourceLanguage] : undefined,
       onTokens: (tokens) => {
         const payload = JSON.stringify({ type: "tokens", tokens });

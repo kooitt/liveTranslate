@@ -40,7 +40,8 @@ server.on("upgrade", (req, socket, head) => {
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => attachHost(room, ws));
+    const sampleRate = Number(url.searchParams.get("sampleRate")) || 16000;
+    wss.handleUpgrade(req, socket, head, (ws) => attachHost(room, ws, sampleRate));
     return;
   }
 

@@ -243,7 +243,12 @@ function connectMic(
 ): void {
   audioCtx = audioContext;
   micStream = stream;
-  micSocket = new WebSocket(wsUrl(`/ws/host?room=${room.code}`));
+  // ponytail: AudioContext({sampleRate:16000}) is only a request — Safari/
+  // iOS and some Android browsers ignore it and keep the hardware's native
+  // rate (44100/48000). Tell the server the *actual* rate rather than
+  // assuming it, or Soniox gets audio at the wrong speed/pitch and never
+  // detects any speech, with no audio bytes ever missing and no error.
+  micSocket = new WebSocket(wsUrl(`/ws/host?room=${room.code}&sampleRate=${Math.round(audioContext.sampleRate)}`));
 
   micSocket.onopen = async () => {
     // ponytail: re-resume defensively — some browsers re-suspend a context
