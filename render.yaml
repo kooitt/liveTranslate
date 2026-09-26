@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: livetranslate
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: SONIOX_API_KEY
+        sync: false
