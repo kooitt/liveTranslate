@@ -199,9 +199,11 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
   let sourcePending = "";
   let translationPending = "";
   let hasContent = false;
+  let noAudioTimer: number | undefined;
 
   function cleanup() {
     window.clearTimeout(reconnectTimer);
+    window.clearTimeout(noAudioTimer);
     pulse.stop();
     socket?.close();
     socket = null;
@@ -214,6 +216,13 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
     socket.onopen = () => {
       reconnectAttempt = 0;
       setStatus(statusEl, "live");
+      window.clearTimeout(noAudioTimer);
+      noAudioTimer = window.setTimeout(() => {
+        if (!hasContent) {
+          emptyState.querySelector(".state-message")!.textContent =
+            "No audio detected yet — check the speaker's microphone.";
+        }
+      }, 10_000);
     };
 
     socket.onmessage = (event) => {
@@ -244,6 +253,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       if (newSourceFinal || newTranslationFinal || sourceNonFinal || translationNonFinal) {
         if (!hasContent) {
           hasContent = true;
+          window.clearTimeout(noAudioTimer);
           emptyState.classList.add("hidden");
           content.classList.remove("hidden");
         }

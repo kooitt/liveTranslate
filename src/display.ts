@@ -44,12 +44,22 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
   setStatus(statusEl, "connecting");
   const socket = new WebSocket(wsUrl(`/ws/listen?room=${code}&lang=${lang.code}`));
 
+  let hasContent = false;
+  const noAudioTimer = window.setTimeout(() => {
+    if (!hasContent) translationEl.textContent = "No audio detected yet — check the speaker's microphone.";
+  }, 10_000);
+
   socket.onopen = () => setStatus(statusEl, "live");
   socket.onclose = () => setStatus(statusEl, "connecting", "Reconnecting");
   socket.onerror = () => setStatus(statusEl, "error");
 
   socket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
+    if (msg.type === "error") {
+      setStatus(statusEl, "error");
+      translationEl.textContent = msg.message ?? "Translation temporarily unavailable.";
+      return;
+    }
     if (msg.type !== "tokens") return;
     let src = "";
     let tr = "";
@@ -58,6 +68,10 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
       else if (token.translation_status === "translation") tr += token.text;
     }
     if (src) sourceEl.textContent = src;
-    if (tr) translationEl.textContent = tr;
+    if (tr) {
+      hasContent = true;
+      window.clearTimeout(noAudioTimer);
+      translationEl.textContent = tr;
+    }
   };
 }
