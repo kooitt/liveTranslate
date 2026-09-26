@@ -6,6 +6,7 @@ import { icons } from "./icons";
 import { createRoom, wsUrl, type RoomInfo } from "./rooms-api";
 
 let audioCtx: AudioContext | null = null;
+let micStream: MediaStream | null = null;
 let processorNode: ScriptProcessorNode | null = null;
 let micSocket: WebSocket | null = null;
 let previewSocket: WebSocket | null = null;
@@ -68,6 +69,7 @@ function renderSetup(root: HTMLElement): void {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const ctx = new AudioContext();
+      await ctx.resume();
       const analyser = ctx.createAnalyser();
       ctx.createMediaStreamSource(stream).connect(analyser);
       testCanvas.classList.remove("hidden");
@@ -86,17 +88,44 @@ function renderSetup(root: HTMLElement): void {
     }
   };
 
+  const submitBtn = root.querySelector<HTMLButtonElement>("#setup-form button[type=submit]")!;
   root.querySelector<HTMLFormElement>("#setup-form")!.onsubmit = async (e) => {
     e.preventDefault();
     const name = (root.querySelector<HTMLInputElement>("#session-name")!).value;
     const sourceLanguage = (root.querySelector<HTMLSelectElement>("#source-language")!).value;
     const previewLanguage = (root.querySelector<HTMLSelectElement>("#preview-language")!).value;
+
+    // ponytail: acquire mic + resume the AudioContext here, synchronously
+    // within the click's user-activation window — a slow room/WebSocket
+    // round trip (e.g. a cold-starting free host) can otherwise outlast
+    // that window, leaving the context stuck "suspended" with no error.
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Starting…";
+    let stream: MediaStream;
+    let audioContext: AudioContext;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioContext = new AudioContext({ sampleRate: 16000 });
+      await audioContext.resume();
+    } catch {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Start session";
+      alert("Microphone access is required to host a session.");
+      return;
+    }
+
     const room = await createRoom(name, sourceLanguage);
-    renderConsole(root, room, previewLanguage);
+    renderConsole(root, room, previewLanguage, audioContext, stream);
   };
 }
 
-function renderConsole(root: HTMLElement, room: RoomInfo, previewLangCode: string): void {
+function renderConsole(
+  root: HTMLElement,
+  room: RoomInfo,
+  previewLangCode: string,
+  audioContext: AudioContext,
+  stream: MediaStream,
+): void {
   root.classList.add("wide");
   const joinLink = `${location.origin}${location.pathname}?room=${room.code}`;
   const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=128x128&data=${encodeURIComponent(joinLink)}`;
@@ -175,7 +204,7 @@ function renderConsole(root: HTMLElement, room: RoomInfo, previewLangCode: strin
     navigator.clipboard.writeText(joinLink);
   };
 
-  connectMic(room, statusEl, root.querySelector<HTMLCanvasElement>("#mic-waveform")!);
+  connectMic(room, statusEl, root.querySelector<HTMLCanvasElement>("#mic-waveform")!, audioContext, stream);
   connectPreview(room, previewLang.code, root);
 
   root.querySelector<HTMLSelectElement>("#preview-language-live")!.onchange = (e) => {
@@ -205,43 +234,53 @@ function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
-function connectMic(room: RoomInfo, statusEl: HTMLElement, waveformCanvas: HTMLCanvasElement): void {
+function connectMic(
+  room: RoomInfo,
+  statusEl: HTMLElement,
+  waveformCanvas: HTMLCanvasElement,
+  audioContext: AudioContext,
+  stream: MediaStream,
+): void {
+  audioCtx = audioContext;
+  micStream = stream;
   micSocket = new WebSocket(wsUrl(`/ws/host?room=${room.code}`));
 
   micSocket.onopen = async () => {
-    setStatus(statusEl, "live");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioCtx = new AudioContext({ sampleRate: 16000 });
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      source.connect(analyser);
-      stopWaveform = attachMicWaveform(waveformCanvas, analyser);
-
-      // ponytail: ScriptProcessorNode is deprecated but keeps this to one
-      // inline function with no worklet file; upgrade path is
-      // AudioWorkletNode if browser support is ever dropped.
-      processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
-      const mute = audioCtx.createGain();
-      mute.gain.value = 0; // keep the graph live without echoing audio to speakers
-
-      processorNode.onaudioprocess = (event) => {
-        if (paused || micSocket?.readyState !== WebSocket.OPEN) return;
-        const input = event.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        micSocket!.send(pcm.buffer);
-      };
-
-      source.connect(processorNode);
-      processorNode.connect(mute);
-      mute.connect(audioCtx.destination);
-    } catch {
-      setStatus(statusEl, "error", "Microphone unavailable");
+    // ponytail: re-resume defensively — some browsers re-suspend a context
+    // that's been idle since it was created, even mid-session.
+    await audioCtx!.resume();
+    if (audioCtx!.state !== "running") {
+      setStatus(statusEl, "error", "Audio blocked — reload and try Start session again");
+      return;
     }
+    setStatus(statusEl, "live");
+
+    const source = audioCtx!.createMediaStreamSource(stream);
+    const analyser = audioCtx!.createAnalyser();
+    source.connect(analyser);
+    stopWaveform = attachMicWaveform(waveformCanvas, analyser);
+
+    // ponytail: ScriptProcessorNode is deprecated but keeps this to one
+    // inline function with no worklet file; upgrade path is
+    // AudioWorkletNode if browser support is ever dropped.
+    processorNode = audioCtx!.createScriptProcessor(4096, 1, 1);
+    const mute = audioCtx!.createGain();
+    mute.gain.value = 0; // keep the graph live without echoing audio to speakers
+
+    processorNode.onaudioprocess = (event) => {
+      if (paused || micSocket?.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        const s = Math.max(-1, Math.min(1, input[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      micSocket!.send(pcm.buffer);
+    };
+
+    source.connect(processorNode);
+    processorNode.connect(mute);
+    mute.connect(audioCtx!.destination);
   };
 
   micSocket.onclose = () => setStatus(statusEl, "offline");
@@ -283,6 +322,8 @@ function stopHosting(): void {
   stopWaveform = null;
   audioCtx?.close();
   audioCtx = null;
+  micStream?.getTracks().forEach((t) => t.stop());
+  micStream = null;
   micSocket?.close();
   micSocket = null;
   previewSocket?.close();
