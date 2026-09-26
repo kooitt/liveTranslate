@@ -692,15 +692,30 @@ input[type="range"] {
   width: 100%;
 }
 
+.display-source,
+.display-translation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  text-align: center;
+}
+
 .display-source {
   font-size: clamp(1.4rem, 1rem + 2vw, 2.4rem);
   color: var(--color-muted);
-  text-align: center;
 }
 
 .display-translation {
   font-size: clamp(2rem, 1.4rem + 4vw, 4.2rem);
   font-weight: 600;
-  text-align: center;
   line-height: 1.25;
+}
+
+/* Sentences inside the display panels inherit the panel's size/weight —
+   only the age-based fade (set inline via line-age-N) should vary. */
+.display-source .transcript-line,
+.display-translation .transcript-line {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
 }

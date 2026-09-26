@@ -295,8 +295,8 @@ function connectMic(
 function connectPreview(room: RoomInfo, langCode: string, root: HTMLElement): void {
   const transcriptEl = root.querySelector<HTMLDivElement>("#transcript-lines")!;
   const translationEl = root.querySelector<HTMLDivElement>("#translation-lines")!;
-  const sourceLines: string[] = [];
-  const translationLines: string[] = [];
+  let sourceText = "";
+  let translationText = "";
 
   previewSocket = new WebSocket(wsUrl(`/ws/listen?room=${room.code}&lang=${langCode}`));
   previewSocket.onmessage = (event) => {
@@ -307,17 +307,20 @@ function connectPreview(room: RoomInfo, langCode: string, root: HTMLElement): vo
     let trFinal = "";
     let trPending = "";
     for (const token of msg.tokens as Array<{ text: string; is_final: boolean; translation_status?: string }>) {
-      // ponytail: "none" is still real spoken text, just not translated — see listen.ts.
+      // ponytail: "none" is still real spoken text, just not translated —
+      // mirror it into both panels so translation doesn't stay empty
+      // forever in a same-language session. See listen.ts.
       if (token.translation_status === "original" || token.translation_status === "none") {
         token.is_final ? (srcFinal += token.text) : (srcPending += token.text);
-      } else if (token.translation_status === "translation") {
+      }
+      if (token.translation_status === "translation" || token.translation_status === "none") {
         token.is_final ? (trFinal += token.text) : (trPending += token.text);
       }
     }
-    if (srcFinal) sourceLines.push(srcFinal);
-    if (trFinal) translationLines.push(trFinal);
-    renderFeed(transcriptEl, sourceLines, srcPending);
-    renderFeed(translationEl, translationLines, trPending);
+    sourceText += srcFinal;
+    translationText += trFinal;
+    renderFeed(transcriptEl, sourceText, srcPending);
+    renderFeed(translationEl, translationText, trPending);
   };
 }
 

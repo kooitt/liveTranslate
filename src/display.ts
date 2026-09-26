@@ -1,5 +1,6 @@
 import { LANGUAGES } from "./languages";
 import { setStatus } from "./status";
+import { renderFeed } from "./transcript";
 import { fetchRoomInfo, noAudioDiagnosis, wsUrl } from "./rooms-api";
 
 /** Large-screen mode for projectors/TVs: no chrome, no controls, high contrast. */
@@ -31,23 +32,27 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
         <span class="language-pair"><strong>${sourceName}</strong> → <strong>${lang.englishName}</strong></span>
       </div>
       <div class="display-body">
-        <p id="display-source" class="display-source"></p>
-        <p id="display-translation" class="display-translation">Waiting for speech…</p>
+        <p id="display-waiting" class="display-translation">Waiting for speech…</p>
+        <div id="display-source" class="display-source hidden"></div>
+        <div id="display-translation" class="display-translation hidden"></div>
       </div>
     </div>
   `;
 
   const statusEl = root.querySelector<HTMLDivElement>("#display-status")!;
-  const sourceEl = root.querySelector<HTMLParagraphElement>("#display-source")!;
-  const translationEl = root.querySelector<HTMLParagraphElement>("#display-translation")!;
+  const waitingEl = root.querySelector<HTMLParagraphElement>("#display-waiting")!;
+  const sourceEl = root.querySelector<HTMLDivElement>("#display-source")!;
+  const translationEl = root.querySelector<HTMLDivElement>("#display-translation")!;
 
   setStatus(statusEl, "connecting");
   const socket = new WebSocket(wsUrl(`/ws/listen?room=${code}&lang=${lang.code}`));
 
+  let sourceText = "";
+  let translationText = "";
   let hasContent = false;
   const noAudioTimer = window.setTimeout(async () => {
     if (hasContent) return;
-    translationEl.textContent = await noAudioDiagnosis(code);
+    waitingEl.textContent = await noAudioDiagnosis(code);
   }, 10_000);
 
   socket.onopen = () => setStatus(statusEl, "live");
@@ -59,26 +64,37 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
     if (msg.type === "error") {
       setStatus(statusEl, "error");
       window.clearTimeout(noAudioTimer); // don't let the generic diagnosis overwrite a specific error
-      translationEl.textContent = msg.message ?? "Translation temporarily unavailable.";
+      waitingEl.classList.remove("hidden");
+      sourceEl.classList.add("hidden");
+      translationEl.classList.add("hidden");
+      waitingEl.textContent = msg.message ?? "Translation temporarily unavailable.";
       return;
     }
     if (msg.type !== "tokens") return;
+
     let src = "";
     let tr = "";
-    for (const token of msg.tokens as Array<{ text: string; translation_status?: string }>) {
-      // ponytail: "none" is still real spoken text, just not translated — see listen.ts.
+    for (const token of msg.tokens as Array<{ text: string; is_final: boolean; translation_status?: string }>) {
+      if (!token.is_final) continue; // display mode only shows settled text, no flickering partials
+      // ponytail: "none" is still real spoken text, just not translated —
+      // show it in both panels so the translation side isn't stuck on the
+      // placeholder forever in a same-language session. See listen.ts.
       if (token.translation_status === "original" || token.translation_status === "none") src += token.text;
-      else if (token.translation_status === "translation") tr += token.text;
+      if (token.translation_status === "translation" || token.translation_status === "none") tr += token.text;
     }
-    if (src) {
-      sourceEl.textContent = src;
-      hasContent = true;
-      window.clearTimeout(noAudioTimer);
-    }
-    if (tr) {
-      hasContent = true;
-      window.clearTimeout(noAudioTimer);
-      translationEl.textContent = tr;
+
+    if (src || tr) {
+      if (!hasContent) {
+        hasContent = true;
+        window.clearTimeout(noAudioTimer);
+        waitingEl.classList.add("hidden");
+        sourceEl.classList.remove("hidden");
+        translationEl.classList.remove("hidden");
+      }
+      sourceText += src;
+      translationText += tr;
+      renderFeed(sourceEl, sourceText, "");
+      renderFeed(translationEl, translationText, "");
     }
   };
 }

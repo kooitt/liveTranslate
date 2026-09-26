@@ -194,8 +194,8 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
     location.href = location.pathname;
   };
 
-  const sourceLines: string[] = [];
-  const translationLines: string[] = [];
+  let sourceText = "";
+  let translationText = "";
   let sourcePending = "";
   let translationPending = "";
   let hasContent = false;
@@ -240,15 +240,18 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       let translationNonFinal = "";
 
       for (const token of tokenMsg.tokens) {
-        // ponytail: "none" is still real spoken text per Soniox — it just
-        // means this token wasn't translated (e.g. same language as the
-        // target, or content outside the configured pair). Treating it
-        // like "original" was the actual bug: those tokens were being
-        // silently dropped, showing "no transcript" despite real speech.
+        // ponytail: "translation_status" is "original" | "translation" | "none".
+        // "none" is still real spoken text — it means this token wasn't
+        // translated, most commonly because the detected source language
+        // already matches the target. It belongs in both panels: it's the
+        // source text, and it's also the correct "translation" (there's
+        // nothing to translate), so the translation panel doesn't get
+        // stuck on its placeholder forever in a same-language session.
         if (token.translation_status === "original" || token.translation_status === "none") {
           if (token.is_final) newSourceFinal += token.text;
           else sourceNonFinal += token.text;
-        } else if (token.translation_status === "translation") {
+        }
+        if (token.translation_status === "translation" || token.translation_status === "none") {
           if (token.is_final) newTranslationFinal += token.text;
           else translationNonFinal += token.text;
         }
@@ -264,16 +267,16 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
         pulse.pulse();
       }
 
-      if (newSourceFinal) sourceLines.push(newSourceFinal);
+      sourceText += newSourceFinal;
       if (newTranslationFinal) {
-        translationLines.push(newTranslationFinal);
+        translationText += newTranslationFinal;
         speak(newTranslationFinal, lang.bcp47);
       }
       sourcePending = sourceNonFinal;
       translationPending = translationNonFinal;
 
-      renderFeed(sourceLinesEl, sourceLines, sourcePending);
-      renderFeed(translationLinesEl, translationLines, translationPending);
+      renderFeed(sourceLinesEl, sourceText, sourcePending);
+      renderFeed(translationLinesEl, translationText, translationPending);
     };
 
     socket.onclose = () => {
