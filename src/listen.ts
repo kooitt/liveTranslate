@@ -5,6 +5,7 @@ import { renderFeed } from "./transcript";
 import { attachPulseWaveform } from "./waveform";
 import { icons } from "./icons";
 import { fetchRoomInfo, noAudioDiagnosis, wsUrl, type RoomInfo } from "./rooms-api";
+import { getDisplayMode, setDisplayMode, renderModeControl, type DisplayMode } from "./display-mode";
 
 interface TokenMsg {
   type: "tokens";
@@ -137,6 +138,11 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
 
       <hr class="divider" />
 
+      <div class="btn-row" style="justify-content: space-between; align-items: center">
+        <p class="panel-label" style="margin:0">Show</p>
+        <div id="mode-control" class="segmented"></div>
+      </div>
+
       <div id="empty-state" class="state-block">
         <p class="state-activity"><span class="status-dot"></span>Waiting for speech…</p>
         <p class="state-message">Translation will appear here automatically once the speaker begins.</p>
@@ -147,7 +153,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
           <p class="panel-label">Source</p>
           <div id="source-lines" class="transcript-lines"></div>
         </div>
-        <div>
+        <div id="translation-panel">
           <p class="panel-label">Translation</p>
           <div id="translation-lines" class="transcript-lines translation-lines"></div>
         </div>
@@ -170,8 +176,16 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
   const emptyState = root.querySelector<HTMLDivElement>("#empty-state")!;
   const content = root.querySelector<HTMLDivElement>("#content")!;
   const sourcePanel = root.querySelector<HTMLDivElement>("#source-panel")!;
+  const translationPanel = root.querySelector<HTMLDivElement>("#translation-panel")!;
   const sourceLinesEl = root.querySelector<HTMLDivElement>("#source-lines")!;
   const translationLinesEl = root.querySelector<HTMLDivElement>("#translation-lines")!;
+
+  let displayMode: DisplayMode = getDisplayMode();
+  renderModeControl(root.querySelector<HTMLDivElement>("#mode-control")!, displayMode, (mode) => {
+    displayMode = mode;
+    setDisplayMode(mode);
+    applyDisplayMode();
+  });
   const speakToggle = root.querySelector<HTMLButtonElement>("#speak-toggle")!;
   const volumeSlider = root.querySelector<HTMLInputElement>("#volume")!;
   const waveformCanvas = root.querySelector<HTMLCanvasElement>("#waveform")!;
@@ -201,6 +215,20 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
   let translationPending = "";
   let hasContent = false;
   let noAudioTimer: number | undefined;
+
+  function applyDisplayMode(): void {
+    translationPanel.classList.toggle("hidden", displayMode === "source");
+    if (displayMode === "translation") {
+      sourcePanel.classList.add("hidden");
+      return;
+    }
+    const hasSource = Boolean(sourceText || sourcePending);
+    sourcePanel.classList.toggle("hidden", !hasSource && displayMode === "both");
+    if (displayMode === "source" && !hasSource) {
+      sourceLinesEl.innerHTML =
+        '<p class="state-message">No separate source text — this session\'s spoken language matches your translation language.</p>';
+    }
+  }
 
   function cleanup() {
     window.clearTimeout(reconnectTimer);
@@ -276,11 +304,9 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       sourcePending = sourceNonFinal;
       translationPending = translationNonFinal;
 
-      if (sourceText || sourcePending) {
-        sourcePanel.classList.remove("hidden");
-        renderFeed(sourceLinesEl, sourceText, sourcePending);
-      }
+      renderFeed(sourceLinesEl, sourceText, sourcePending);
       renderFeed(translationLinesEl, translationText, translationPending);
+      applyDisplayMode();
     };
 
     socket.onclose = () => {

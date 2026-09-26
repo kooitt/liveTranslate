@@ -156,9 +156,14 @@ function renderConsole(
           <img class="qr-image" src="${qrSrc}" alt="QR code to join this session" width="128" height="128" />
           <div style="flex:1; min-width:0">
             <div class="join-link">${joinLink}</div>
-            <div class="btn-row" style="margin-top: var(--space-2)">
+            <div class="btn-row" style="margin-top: var(--space-2); align-items: center">
               <button id="copy-link" class="btn btn-secondary">Copy link</button>
-              <a href="?display=${room.code}&lang=${previewLang.code}" target="_blank" class="btn btn-secondary" rel="noopener">Open event display</a>
+              <a id="event-display-link" href="?display=${room.code}&lang=${previewLang.code}&mode=both" target="_blank" class="btn btn-secondary" rel="noopener">Open event display</a>
+              <select id="event-display-mode" class="field-select" style="max-width:140px" aria-label="Event display: text to show">
+                <option value="both" selected>Show: both</option>
+                <option value="translation">Show: translated only</option>
+                <option value="source">Show: source only</option>
+              </select>
             </div>
           </div>
         </div>
@@ -203,6 +208,11 @@ function renderConsole(
   root.querySelector<HTMLButtonElement>("#copy-link")!.onclick = () => {
     navigator.clipboard.writeText(joinLink);
   };
+  const displayLink = root.querySelector<HTMLAnchorElement>("#event-display-link")!;
+  root.querySelector<HTMLSelectElement>("#event-display-mode")!.onchange = (e) => {
+    const mode = (e.target as HTMLSelectElement).value;
+    displayLink.href = `?display=${room.code}&lang=${previewLang.code}&mode=${mode}`;
+  };
 
   connectMic(room, statusEl, root.querySelector<HTMLCanvasElement>("#mic-waveform")!, audioContext, stream);
   connectPreview(room, previewLang.code, root);
@@ -213,6 +223,8 @@ function renderConsole(
     root.querySelector(".console-panel:nth-child(2) .panel-label")!.textContent =
       `Translation (${LANGUAGES.find((l) => l.code === code)?.englishName ?? code})`;
     connectPreview(room, code, root);
+    const mode = root.querySelector<HTMLSelectElement>("#event-display-mode")!.value;
+    displayLink.href = `?display=${room.code}&lang=${code}&mode=${mode}`;
   };
 
   const pauseBtn = root.querySelector<HTMLButtonElement>("#pause-btn")!;

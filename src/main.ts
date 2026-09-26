@@ -12,7 +12,7 @@ const roomFromLink = params.get("room") ?? "";
 
 if (displayCode) {
   // Event display mode gets zero chrome — no header, no theme toggle.
-  initDisplayView(appRoot, displayCode, params.get("lang") ?? "en");
+  initDisplayView(appRoot, displayCode, params.get("lang") ?? "en", params.get("mode"));
 } else {
   appRoot.innerHTML = `
     <header class="shell-header">
