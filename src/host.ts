@@ -307,7 +307,8 @@ function connectPreview(room: RoomInfo, langCode: string, root: HTMLElement): vo
     let trFinal = "";
     let trPending = "";
     for (const token of msg.tokens as Array<{ text: string; is_final: boolean; translation_status?: string }>) {
-      if (token.translation_status === "original") {
+      // ponytail: "none" is still real spoken text, just not translated — see listen.ts.
+      if (token.translation_status === "original" || token.translation_status === "none") {
         token.is_final ? (srcFinal += token.text) : (srcPending += token.text);
       } else if (token.translation_status === "translation") {
         token.is_final ? (trFinal += token.text) : (trPending += token.text);

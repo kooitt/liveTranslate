@@ -240,7 +240,12 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       let translationNonFinal = "";
 
       for (const token of tokenMsg.tokens) {
-        if (token.translation_status === "original") {
+        // ponytail: "none" is still real spoken text per Soniox — it just
+        // means this token wasn't translated (e.g. same language as the
+        // target, or content outside the configured pair). Treating it
+        // like "original" was the actual bug: those tokens were being
+        // silently dropped, showing "no transcript" despite real speech.
+        if (token.translation_status === "original" || token.translation_status === "none") {
           if (token.is_final) newSourceFinal += token.text;
           else sourceNonFinal += token.text;
         } else if (token.translation_status === "translation") {

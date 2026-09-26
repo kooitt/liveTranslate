@@ -66,7 +66,8 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
     let src = "";
     let tr = "";
     for (const token of msg.tokens as Array<{ text: string; translation_status?: string }>) {
-      if (token.translation_status === "original") src += token.text;
+      // ponytail: "none" is still real spoken text, just not translated — see listen.ts.
+      if (token.translation_status === "original" || token.translation_status === "none") src += token.text;
       else if (token.translation_status === "translation") tr += token.text;
     }
     if (src) {
