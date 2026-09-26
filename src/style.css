@@ -699,7 +699,8 @@ input[type="range"] {
    Event display mode (large screens / projectors)
    ========================================================================== */
 .display-shell {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden; /* the shell never scrolls — each text panel scrolls itself, see below */
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
@@ -711,6 +712,7 @@ input[type="range"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .display-body {
@@ -722,6 +724,7 @@ input[type="range"] {
   max-width: 1100px;
   margin: 0 auto;
   width: 100%;
+  min-height: 0; /* let children below actually shrink and scroll instead of overflowing */
 }
 
 .display-source,
@@ -730,17 +733,30 @@ input[type="range"] {
   flex-direction: column;
   gap: var(--space-3);
   text-align: center;
+  /* New text always pushes the latest line into view automatically
+     (see renderFeed's scrollTop assignment) — nobody should ever need
+     to touch a scrollbar on a projector screen. The scrollbar itself is
+     hidden since it's pointless chrome on a display nobody can click. */
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.display-source::-webkit-scrollbar,
+.display-translation::-webkit-scrollbar {
+  display: none;
 }
 
 .display-source {
   font-size: clamp(1.4rem, 1rem + 2vw, 2.4rem);
   color: var(--color-muted);
+  flex: 0 1 40%;
 }
 
 .display-translation {
   font-size: clamp(2rem, 1.4rem + 4vw, 4.2rem);
   font-weight: 600;
   line-height: 1.25;
+  flex: 1 1 60%;
 }
 
 /* Sentences inside the display panels inherit the panel's size/weight —

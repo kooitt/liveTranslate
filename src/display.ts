@@ -2,16 +2,11 @@ import { LANGUAGES } from "./languages";
 import { setStatus } from "./status";
 import { renderFeed } from "./transcript";
 import { fetchRoomInfo, noAudioDiagnosis, wsUrl } from "./rooms-api";
-import { isDisplayMode, type DisplayMode } from "./display-mode";
+import { isDisplayMode, renderModeControl, type DisplayMode } from "./display-mode";
 
-/**
- * Large-screen mode for projectors/TVs: no chrome, no controls, high
- * contrast. The mode (source/translation/both) is set once by whoever
- * shares the link — see host.ts — not by an on-screen control, since this
- * screen is shared by everyone looking at it.
- */
+/** Large-screen mode for projectors/TVs: minimal chrome, high contrast. */
 export async function initDisplayView(root: HTMLElement, code: string, langCode: string, modeParam: string | null): Promise<void> {
-  const mode: DisplayMode = isDisplayMode(modeParam) ? modeParam : "both";
+  let mode: DisplayMode = isDisplayMode(modeParam) ? modeParam : "both";
   document.documentElement.dataset.theme = "dark"; // projectors read best on dark, high-contrast
 
   const lang = LANGUAGES.find((l) => l.code === langCode) ?? LANGUAGES[0];
@@ -37,6 +32,7 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
       <div class="display-header">
         <div id="display-status"></div>
         <span class="language-pair"><strong>${sourceName}</strong> → <strong>${lang.englishName}</strong></span>
+        <div id="mode-control" class="segmented"></div>
       </div>
       <div class="display-body">
         <p id="display-waiting" class="display-translation">Waiting for speech…</p>
@@ -57,6 +53,31 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
   let sourceText = "";
   let translationText = "";
   let hasContent = false;
+
+  /** Applies the current mode to already-known text — called on every
+   * new token batch, and again whenever the mode control is clicked, so
+   * switching modes updates the screen immediately without waiting for
+   * more speech. */
+  function render(): void {
+    if (!hasContent) return;
+    const showSource = mode !== "translation" && (mode === "source" || sourceText);
+    const showTranslation = mode !== "source";
+    sourceEl.classList.toggle("hidden", !showSource);
+    translationEl.classList.toggle("hidden", !showTranslation);
+    if (showSource) {
+      renderFeed(sourceEl, sourceText, "");
+      if (mode === "source" && !sourceText) {
+        sourceEl.textContent = "No separate source text — this session's spoken language matches the display language.";
+      }
+    }
+    if (showTranslation) renderFeed(translationEl, translationText, "");
+  }
+
+  renderModeControl(root.querySelector<HTMLDivElement>("#mode-control")!, mode, (next) => {
+    mode = next;
+    render();
+  });
+
   const noAudioTimer = window.setTimeout(async () => {
     if (hasContent) return;
     waitingEl.textContent = await noAudioDiagnosis(code);
@@ -98,21 +119,10 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
         hasContent = true;
         window.clearTimeout(noAudioTimer);
         waitingEl.classList.add("hidden");
-        if (mode !== "source") translationEl.classList.remove("hidden");
       }
       sourceText += src;
       translationText += tr;
-      // In "both" mode, only show the source panel when it's genuinely
-      // different content (no duplicate text). In "source" mode it's
-      // always shown, with a note if there's nothing distinct to show.
-      if (mode !== "translation" && (mode === "source" || sourceText)) {
-        sourceEl.classList.remove("hidden");
-        renderFeed(sourceEl, sourceText, "");
-        if (mode === "source" && !sourceText) {
-          sourceEl.textContent = "No separate source text — this session's spoken language matches the display language.";
-        }
-      }
-      if (mode !== "source") renderFeed(translationEl, translationText, "");
+      render();
     }
   };
 }
