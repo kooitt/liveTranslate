@@ -143,7 +143,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       </div>
 
       <div id="content" class="hidden">
-        <div class="panel-source">
+        <div id="source-panel" class="panel-source hidden">
           <p class="panel-label">Source</p>
           <div id="source-lines" class="transcript-lines"></div>
         </div>
@@ -169,6 +169,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
   const statusEl = root.querySelector<HTMLDivElement>("#live-status")!;
   const emptyState = root.querySelector<HTMLDivElement>("#empty-state")!;
   const content = root.querySelector<HTMLDivElement>("#content")!;
+  const sourcePanel = root.querySelector<HTMLDivElement>("#source-panel")!;
   const sourceLinesEl = root.querySelector<HTMLDivElement>("#source-lines")!;
   const translationLinesEl = root.querySelector<HTMLDivElement>("#translation-lines")!;
   const speakToggle = root.querySelector<HTMLButtonElement>("#speak-toggle")!;
@@ -241,13 +242,13 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
 
       for (const token of tokenMsg.tokens) {
         // ponytail: "translation_status" is "original" | "translation" | "none".
-        // "none" is still real spoken text — it means this token wasn't
-        // translated, most commonly because the detected source language
-        // already matches the target. It belongs in both panels: it's the
-        // source text, and it's also the correct "translation" (there's
-        // nothing to translate), so the translation panel doesn't get
-        // stuck on its placeholder forever in a same-language session.
-        if (token.translation_status === "original" || token.translation_status === "none") {
+        // "none" means "not translated" (most commonly: the detected
+        // source already matches the target language) — it's the single
+        // clean output text, not a duplicate of the source. Only genuine
+        // "original" tokens (which only occur alongside a real
+        // "translation") go in the source lane, or same-language sessions
+        // showed the same sentence twice.
+        if (token.translation_status === "original") {
           if (token.is_final) newSourceFinal += token.text;
           else sourceNonFinal += token.text;
         }
@@ -275,7 +276,10 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       sourcePending = sourceNonFinal;
       translationPending = translationNonFinal;
 
-      renderFeed(sourceLinesEl, sourceText, sourcePending);
+      if (sourceText || sourcePending) {
+        sourcePanel.classList.remove("hidden");
+        renderFeed(sourceLinesEl, sourceText, sourcePending);
+      }
       renderFeed(translationLinesEl, translationText, translationPending);
     };
 

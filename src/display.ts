@@ -76,10 +76,13 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
     let tr = "";
     for (const token of msg.tokens as Array<{ text: string; is_final: boolean; translation_status?: string }>) {
       if (!token.is_final) continue; // display mode only shows settled text, no flickering partials
-      // ponytail: "none" is still real spoken text, just not translated —
-      // show it in both panels so the translation side isn't stuck on the
-      // placeholder forever in a same-language session. See listen.ts.
-      if (token.translation_status === "original" || token.translation_status === "none") src += token.text;
+      // ponytail: "none" means "not translated" (most commonly: the source
+      // already matches the target language). It's the single clean
+      // output text, NOT a duplicate of the source — putting it in both
+      // panels showed the same sentence twice. Only genuine "original"
+      // tokens (which only occur alongside a real "translation") go in
+      // the source lane; the source panel stays hidden otherwise.
+      if (token.translation_status === "original") src += token.text;
       if (token.translation_status === "translation" || token.translation_status === "none") tr += token.text;
     }
 
@@ -88,12 +91,14 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
         hasContent = true;
         window.clearTimeout(noAudioTimer);
         waitingEl.classList.add("hidden");
-        sourceEl.classList.remove("hidden");
         translationEl.classList.remove("hidden");
       }
       sourceText += src;
       translationText += tr;
-      renderFeed(sourceEl, sourceText, "");
+      if (sourceText) {
+        sourceEl.classList.remove("hidden");
+        renderFeed(sourceEl, sourceText, "");
+      }
       renderFeed(translationEl, translationText, "");
     }
   };
