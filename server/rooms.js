@@ -18,6 +18,7 @@ export function createRoom({ name, sourceLanguage } = {}) {
     name: name?.trim() || "Live Session",
     sourceLanguage: sourceLanguage || "",
     hostSocket: null,
+    audioBytesReceived: 0,
     languages: new Map(),
   };
   rooms.set(code, room);
@@ -37,6 +38,10 @@ export function getRoomInfo(code) {
     name: room.name,
     sourceLanguage: room.sourceLanguage,
     live: room.hostSocket !== null,
+    // ponytail: a coarse byte counter, not a rate — just enough to tell
+    // listeners apart "host never sent audio" from "host is sending audio
+    // but no transcript is coming back" without exposing raw audio.
+    hostAudioReceived: room.audioBytesReceived > 0,
   };
 }
 
@@ -55,6 +60,7 @@ export function attachHost(room, ws) {
   room.hostSocket = ws;
   ws.on("message", (data, isBinary) => {
     if (!isBinary) return; // ignore any stray control/text frames
+    room.audioBytesReceived += data.length;
     for (const entry of room.languages.values()) entry.session.sendAudio(data);
   });
   ws.on("close", () => closeRoom(room));

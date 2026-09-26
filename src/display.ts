@@ -1,6 +1,6 @@
 import { LANGUAGES } from "./languages";
 import { setStatus } from "./status";
-import { fetchRoomInfo, wsUrl } from "./rooms-api";
+import { fetchRoomInfo, noAudioDiagnosis, wsUrl } from "./rooms-api";
 
 /** Large-screen mode for projectors/TVs: no chrome, no controls, high contrast. */
 export async function initDisplayView(root: HTMLElement, code: string, langCode: string): Promise<void> {
@@ -45,8 +45,9 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
   const socket = new WebSocket(wsUrl(`/ws/listen?room=${code}&lang=${lang.code}`));
 
   let hasContent = false;
-  const noAudioTimer = window.setTimeout(() => {
-    if (!hasContent) translationEl.textContent = "No audio detected yet — check the speaker's microphone.";
+  const noAudioTimer = window.setTimeout(async () => {
+    if (hasContent) return;
+    translationEl.textContent = await noAudioDiagnosis(code);
   }, 10_000);
 
   socket.onopen = () => setStatus(statusEl, "live");
@@ -57,6 +58,7 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
     const msg = JSON.parse(event.data);
     if (msg.type === "error") {
       setStatus(statusEl, "error");
+      window.clearTimeout(noAudioTimer); // don't let the generic diagnosis overwrite a specific error
       translationEl.textContent = msg.message ?? "Translation temporarily unavailable.";
       return;
     }
@@ -67,7 +69,11 @@ export async function initDisplayView(root: HTMLElement, code: string, langCode:
       if (token.translation_status === "original") src += token.text;
       else if (token.translation_status === "translation") tr += token.text;
     }
-    if (src) sourceEl.textContent = src;
+    if (src) {
+      sourceEl.textContent = src;
+      hasContent = true;
+      window.clearTimeout(noAudioTimer);
+    }
     if (tr) {
       hasContent = true;
       window.clearTimeout(noAudioTimer);

@@ -4,7 +4,7 @@ import { setStatus, friendlyDisconnectMessage, type ConnState } from "./status";
 import { renderFeed } from "./transcript";
 import { attachPulseWaveform } from "./waveform";
 import { icons } from "./icons";
-import { fetchRoomInfo, wsUrl, type RoomInfo } from "./rooms-api";
+import { fetchRoomInfo, noAudioDiagnosis, wsUrl, type RoomInfo } from "./rooms-api";
 
 interface TokenMsg {
   type: "tokens";
@@ -217,11 +217,9 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       reconnectAttempt = 0;
       setStatus(statusEl, "live");
       window.clearTimeout(noAudioTimer);
-      noAudioTimer = window.setTimeout(() => {
-        if (!hasContent) {
-          emptyState.querySelector(".state-message")!.textContent =
-            "No audio detected yet — check the speaker's microphone.";
-        }
+      noAudioTimer = window.setTimeout(async () => {
+        if (hasContent) return;
+        emptyState.querySelector(".state-message")!.textContent = await noAudioDiagnosis(room.code);
       }, 10_000);
     };
 
@@ -229,6 +227,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       const msg = JSON.parse(event.data);
       if (msg.type === "error") {
         setStatus(statusEl, "error");
+        window.clearTimeout(noAudioTimer); // don't let the generic diagnosis overwrite a specific error
         emptyState.querySelector(".state-message")!.textContent = msg.message ?? "Translation unavailable.";
         return;
       }
