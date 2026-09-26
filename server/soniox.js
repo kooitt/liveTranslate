@@ -7,7 +7,7 @@ const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
  * pcm_s16le/16kHz/mono audio in; translated tokens come out via onTokens.
  * The session queues audio sent before the config handshake completes.
  */
-export function openSonioxSession({ apiKey, targetLanguage, onTokens, onError, onClose }) {
+export function openSonioxSession({ apiKey, targetLanguage, languageHints, onTokens, onError, onClose }) {
   const ws = new WebSocket(SONIOX_WS_URL);
   const queue = [];
   let ready = false;
@@ -21,6 +21,7 @@ export function openSonioxSession({ apiKey, targetLanguage, onTokens, onError, o
         sample_rate: 16000,
         num_channels: 1,
         enable_language_identification: true,
+        ...(languageHints?.length ? { language_hints: languageHints } : {}),
         translation: { type: "one_way", target_language: targetLanguage },
       }),
     );

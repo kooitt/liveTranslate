@@ -1,19 +1,25 @@
 import { randomBytes } from "node:crypto";
 import { openSonioxSession } from "./soniox.js";
 
-// code -> { hostSocket, languages: Map<langCode, { session, listeners: Set<WebSocket> }> }
+// code -> { code, name, sourceLanguage, hostSocket, languages: Map<langCode, { session, listeners: Set<WebSocket> }> }
 const rooms = new Map();
 
 function generateCode() {
   return randomBytes(3).toString("hex"); // e.g. "a1b2c3"
 }
 
-export function createRoom() {
+export function createRoom({ name, sourceLanguage } = {}) {
   let code;
   do {
     code = generateCode();
   } while (rooms.has(code));
-  const room = { code, hostSocket: null, languages: new Map() };
+  const room = {
+    code,
+    name: name?.trim() || "Live Session",
+    sourceLanguage: sourceLanguage || "",
+    hostSocket: null,
+    languages: new Map(),
+  };
   rooms.set(code, room);
   return room;
 }
@@ -22,12 +28,25 @@ export function getRoom(code) {
   return rooms.get(code);
 }
 
+/** Public-safe room info for the join screen / event display — no sockets. */
+export function getRoomInfo(code) {
+  const room = rooms.get(code);
+  if (!room) return null;
+  return {
+    code: room.code,
+    name: room.name,
+    sourceLanguage: room.sourceLanguage,
+    live: room.hostSocket !== null,
+  };
+}
+
 function closeRoom(room) {
   for (const entry of room.languages.values()) {
     entry.session.close();
     for (const listener of entry.listeners) listener.close();
   }
   room.languages.clear();
+  room.hostSocket = null;
   rooms.delete(room.code);
 }
 
@@ -51,6 +70,7 @@ export function joinListener(room, langCode, ws, apiKey) {
     entry.session = openSonioxSession({
       apiKey,
       targetLanguage: langCode,
+      languageHints: room.sourceLanguage ? [room.sourceLanguage] : undefined,
       onTokens: (tokens) => {
         const payload = JSON.stringify({ type: "tokens", tokens });
         for (const listener of entry.listeners) {

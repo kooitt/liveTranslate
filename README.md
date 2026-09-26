@@ -24,11 +24,25 @@ target language at a time. So:
 Text-to-speech uses only the browser's built-in `SpeechSynthesis` API — free,
 no extra API calls, off by default, toggled per listener.
 
+## Screens
+
+- **Operator console** (`?` no params, "Host a session") — set up a session
+  (name, speaker language, preview language), then Start/Pause/Stop, test
+  your mic, see the live transcript + translation, and share a join
+  link/QR code.
+- **Join / listener** (`?room=CODE`) — enter or scan a code, pick a language
+  by name (no flags), then see live fading captions with a speak-aloud
+  toggle, volume slider, and connection status.
+- **Event display** (`?display=CODE&lang=xx`) — a full-screen, high-contrast,
+  chrome-free large-screen mode for projectors/TVs.
+
 ## Project layout
 
 ```
 server/        Express + ws backend: room registry + Soniox relay
-src/           Vite + TypeScript frontend (host + listener screens)
+src/           Vite + TypeScript frontend (design tokens, host/listener/
+               display screens, shared status/waveform/transcript/theme
+               modules)
 index.html     Single-page entry point
 ```
 
@@ -65,3 +79,6 @@ and deploy.
 - Late joiners only see captions from the moment their language's session
   opens — there's no rewind of missed speech.
 - No accounts/auth; rooms are ephemeral and identified only by their code.
+- Dark mode is a manual toggle (persisted) that also respects the system
+  `prefers-color-scheme` on first visit; Event Display forces dark for
+  projector/TV readability.
