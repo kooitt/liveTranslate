@@ -158,12 +158,6 @@ function renderConsole(
             <div class="join-link">${joinLink}</div>
             <div class="btn-row" style="margin-top: var(--space-2); align-items: center">
               <button id="copy-link" class="btn btn-secondary">Copy link</button>
-              <a id="event-display-link" href="?display=${room.code}&lang=${previewLang.code}&mode=both" target="_blank" class="btn btn-secondary" rel="noopener">Open event display</a>
-              <select id="event-display-mode" class="field-select" style="max-width:140px" aria-label="Event display: text to show">
-                <option value="both" selected>Show: both</option>
-                <option value="translation">Show: translated only</option>
-                <option value="source">Show: source only</option>
-              </select>
             </div>
           </div>
         </div>
@@ -172,15 +166,21 @@ function renderConsole(
       <hr class="divider" />
 
       <div class="console-grid">
-        <div class="console-panel">
-          <p class="panel-label">Live transcript</p>
+        <div class="console-panel" id="transcript-panel">
+          <div class="panel-label-row">
+            <p class="panel-label">Live transcript</p>
+            <button type="button" class="icon-btn fullscreen-btn" data-target="transcript-panel" aria-label="View live transcript full screen">${icons.expand}</button>
+          </div>
           <div id="transcript-lines" class="transcript-lines" style="min-height:120px">
             <p class="state-message">Waiting for speech…</p>
           </div>
         </div>
-        <div class="console-panel">
-          <p class="panel-label">Translation (${escapeHtml(previewLang.englishName)})</p>
-          <div id="translation-lines" class="transcript-lines" style="min-height:120px">
+        <div class="console-panel" id="translation-panel">
+          <div class="panel-label-row">
+            <p class="panel-label">Translation (${escapeHtml(previewLang.englishName)})</p>
+            <button type="button" class="icon-btn fullscreen-btn" data-target="translation-panel" aria-label="View translation full screen">${icons.expand}</button>
+          </div>
+          <div id="translation-lines" class="transcript-lines translation-lines" style="min-height:120px">
             <p class="state-message">Waiting for speech…</p>
           </div>
         </div>
@@ -208,11 +208,24 @@ function renderConsole(
   root.querySelector<HTMLButtonElement>("#copy-link")!.onclick = () => {
     navigator.clipboard.writeText(joinLink);
   };
-  const displayLink = root.querySelector<HTMLAnchorElement>("#event-display-link")!;
-  root.querySelector<HTMLSelectElement>("#event-display-mode")!.onchange = (e) => {
-    const mode = (e.target as HTMLSelectElement).value;
-    displayLink.href = `?display=${room.code}&lang=${previewLang.code}&mode=${mode}`;
-  };
+
+  // Full screen uses the native Fullscreen API directly on a panel, so a
+  // panel showing the transcript or translation can be projected without
+  // ever leaving this console or opening a separate display page.
+  root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
+    btn.onclick = () => {
+      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`)!;
+      if (document.fullscreenElement === panel) document.exitFullscreen();
+      else panel.requestFullscreen();
+    };
+  });
+  document.addEventListener("fullscreenchange", () => {
+    root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
+      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`);
+      const active = !!panel && document.fullscreenElement === panel;
+      btn.innerHTML = active ? icons.close : icons.expand;
+    });
+  });
 
   connectMic(room, statusEl, root.querySelector<HTMLCanvasElement>("#mic-waveform")!, audioContext, stream);
   connectPreview(room, previewLang.code, root);
@@ -220,11 +233,9 @@ function renderConsole(
   root.querySelector<HTMLSelectElement>("#preview-language-live")!.onchange = (e) => {
     const code = (e.target as HTMLSelectElement).value;
     previewSocket?.close();
-    root.querySelector(".console-panel:nth-child(2) .panel-label")!.textContent =
+    root.querySelector("#translation-panel .panel-label")!.textContent =
       `Translation (${LANGUAGES.find((l) => l.code === code)?.englishName ?? code})`;
     connectPreview(room, code, root);
-    const mode = root.querySelector<HTMLSelectElement>("#event-display-mode")!.value;
-    displayLink.href = `?display=${room.code}&lang=${code}&mode=${mode}`;
   };
 
   const pauseBtn = root.querySelector<HTMLButtonElement>("#pause-btn")!;

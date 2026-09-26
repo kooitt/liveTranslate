@@ -410,6 +410,49 @@ a {
   margin-bottom: var(--space-2);
 }
 
+.panel-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.panel-label-row .panel-label {
+  margin-bottom: 0;
+}
+
+.panel-label-row .icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+/* A panel expanded via the native Fullscreen API — big, centered,
+   auto-scrolling text so it can be projected straight from the console
+   without a separate display page. */
+.console-panel:fullscreen {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  padding: var(--space-6);
+  background: var(--color-bg);
+}
+
+.console-panel:fullscreen .transcript-lines {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  justify-content: center;
+}
+
+.console-panel:fullscreen .transcript-line {
+  font-size: var(--text-translation);
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.35;
+}
+
 .panel-source {
   margin-bottom: var(--space-5);
 }

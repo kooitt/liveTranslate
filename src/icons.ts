@@ -29,4 +29,7 @@ export const icons = {
   pause: svg('<rect x="5.5" y="4.5" width="3" height="11"/><rect x="11.5" y="4.5" width="3" height="11"/>'),
   stop: svg('<rect x="5" y="5" width="10" height="10" rx="1.5"/>'),
   close: svg('<path d="M5 5l10 10M15 5L5 15"/>'),
+  expand: svg(
+    '<path d="M7 3H3v4"/><path d="M13 3h4v4"/><path d="M17 13v4h-4"/><path d="M3 13v4h4"/>',
+  ),
 };
