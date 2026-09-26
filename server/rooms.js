@@ -89,6 +89,19 @@ export function joinListener(room, langCode, ws, apiKey) {
           if (listener.readyState === listener.OPEN) listener.send(payload);
         }
       },
+      onClose: ({ intentional, hadError }) => {
+        // Always drop the dead session so the next join/reload gets a fresh
+        // one instead of silently attaching to one that can never recover.
+        room.languages.delete(langCode);
+        if (intentional || hadError) return; // already reported, or a deliberate shutdown
+        const payload = JSON.stringify({
+          type: "error",
+          message: "Translation session ended unexpectedly. Please reload to reconnect.",
+        });
+        for (const listener of entry.listeners) {
+          if (listener.readyState === listener.OPEN) listener.send(payload);
+        }
+      },
     });
   }
   entry.listeners.add(ws);
