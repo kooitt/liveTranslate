@@ -149,12 +149,18 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       </div>
 
       <div id="content" class="hidden">
-        <div id="source-panel" class="panel-source hidden">
-          <p class="panel-label">Source</p>
+        <div id="source-panel" class="panel-source console-panel hidden">
+          <div class="panel-label-row">
+            <p class="panel-label">Source</p>
+            <button type="button" class="icon-btn fullscreen-btn" data-target="source-panel" aria-label="View source full screen">${icons.expand}</button>
+          </div>
           <div id="source-lines" class="transcript-lines"></div>
         </div>
-        <div id="translation-panel">
-          <p class="panel-label">Translation</p>
+        <div id="translation-panel" class="console-panel">
+          <div class="panel-label-row">
+            <p class="panel-label">Translation</p>
+            <button type="button" class="icon-btn fullscreen-btn" data-target="translation-panel" aria-label="View translation full screen">${icons.expand}</button>
+          </div>
           <div id="translation-lines" class="transcript-lines translation-lines"></div>
         </div>
       </div>
@@ -208,6 +214,23 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
     cleanup();
     location.href = location.pathname;
   };
+
+  // Full screen uses the native Fullscreen API directly on a panel, so the
+  // source or translation panel can be projected without leaving this view.
+  root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
+    btn.onclick = () => {
+      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`)!;
+      if (document.fullscreenElement === panel) document.exitFullscreen();
+      else panel.requestFullscreen();
+    };
+  });
+  document.addEventListener("fullscreenchange", () => {
+    root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
+      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`);
+      const active = !!panel && document.fullscreenElement === panel;
+      btn.innerHTML = active ? icons.close : icons.expand;
+    });
+  });
 
   let sourceText = "";
   let translationText = "";
