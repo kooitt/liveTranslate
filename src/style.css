@@ -568,6 +568,30 @@ a {
   border-color: var(--color-accent);
 }
 
+.lang-more {
+  margin-top: var(--space-3);
+}
+
+.lang-more summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  list-style: none;
+}
+
+.lang-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.lang-more summary svg {
+  transition: transform 0.15s var(--ease);
+}
+
+.lang-more[open] summary svg {
+  transform: rotate(180deg);
+}
+
 .segmented {
   display: inline-flex;
   border: 1px solid var(--color-border);

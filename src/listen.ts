@@ -33,7 +33,11 @@ function renderJoinScreen(root: HTMLElement, initialCode: string): void {
       <div id="join-status" class="state-block hidden"></div>
       <div id="lang-section" class="hidden">
         <p class="field-label">Choose your language</p>
-        <div id="lang-list" class="lang-list" role="listbox" aria-label="Choose your language"></div>
+        <div id="quick-lang-list" class="lang-list" role="listbox" aria-label="Common languages"></div>
+        <details class="lang-more">
+          <summary class="field-label">More languages ${icons.chevronDown}</summary>
+          <div id="lang-list" class="lang-list" role="listbox" aria-label="More languages" style="margin-top: var(--space-2)"></div>
+        </details>
         <div class="btn-row" style="margin-top: var(--space-5)">
           <button id="start-listening" class="btn btn-primary" disabled>Start listening</button>
         </div>
@@ -44,13 +48,18 @@ function renderJoinScreen(root: HTMLElement, initialCode: string): void {
   const codeInput = root.querySelector<HTMLInputElement>("#code-input")!;
   const joinStatus = root.querySelector<HTMLDivElement>("#join-status")!;
   const langSection = root.querySelector<HTMLDivElement>("#lang-section")!;
+  const quickLangList = root.querySelector<HTMLDivElement>("#quick-lang-list")!;
   const langList = root.querySelector<HTMLDivElement>("#lang-list")!;
   const startBtn = root.querySelector<HTMLButtonElement>("#start-listening")!;
 
   let selected: LanguageOption | null = null;
   let currentInfo: RoomInfo | null = null;
 
-  for (const lang of LANGUAGES) {
+  // ponytail: most listeners pick one of a handful of languages — surface
+  // those as a short tappable row up front so nobody has to scroll a long
+  // list on a phone, and tuck everything else behind a native <details>.
+  const COMMON_CODES = ["en", "zh", "ms", "ta"];
+  function addLangButton(container: HTMLElement, lang: LanguageOption): void {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "lang-option";
@@ -60,10 +69,17 @@ function renderJoinScreen(root: HTMLElement, initialCode: string): void {
     btn.onclick = () => {
       selected = lang;
       startBtn.disabled = false;
-      langList.querySelectorAll(".lang-option").forEach((el) => el.setAttribute("aria-pressed", "false"));
+      root.querySelectorAll(".lang-option").forEach((el) => el.setAttribute("aria-pressed", "false"));
       btn.setAttribute("aria-pressed", "true");
     };
-    langList.appendChild(btn);
+    container.appendChild(btn);
+  }
+  for (const code of COMMON_CODES) {
+    const lang = LANGUAGES.find((l) => l.code === code);
+    if (lang) addLangButton(quickLangList, lang);
+  }
+  for (const lang of LANGUAGES) {
+    if (!COMMON_CODES.includes(lang.code)) addLangButton(langList, lang);
   }
 
   async function lookupRoom(code: string) {

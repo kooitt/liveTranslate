@@ -21,6 +21,7 @@ export const LANGUAGES: LanguageOption[] = [
   { code: "ar", name: "العربية", englishName: "Arabic", bcp47: "ar-SA" },
   { code: "hi", name: "हिन्दी", englishName: "Hindi", bcp47: "hi-IN" },
   { code: "ru", name: "Русский", englishName: "Russian", bcp47: "ru-RU" },
+  { code: "ta", name: "தமிழ்", englishName: "Tamil", bcp47: "ta-IN" },
 ];
 
 export function findLanguage(code: string): LanguageOption | undefined {
