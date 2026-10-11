@@ -46,6 +46,7 @@ export function getRoomInfo(code) {
 }
 
 function closeRoom(room) {
+  if (room.hostGraceTimer) clearTimeout(room.hostGraceTimer);
   for (const entry of room.languages.values()) {
     entry.session.close();
     for (const listener of entry.listeners) listener.close();
@@ -55,8 +56,19 @@ function closeRoom(room) {
   rooms.delete(room.code);
 }
 
+// ponytail: how long a room survives with no host attached before it's torn
+// down for good. The host's browser retries the WS with backoff up to 10s
+// between attempts (see host.ts), so this needs to comfortably outlast a
+// few of those attempts — a brief network blip or server hiccup shouldn't
+// instantly kill every listener's translation and force a brand new room.
+const HOST_RECONNECT_GRACE_MS = 30_000;
+
 /** Wires a host's mic WebSocket to fan its audio into every active language session. */
 export function attachHost(room, ws, sampleRate) {
+  if (room.hostGraceTimer) {
+    clearTimeout(room.hostGraceTimer);
+    room.hostGraceTimer = null;
+  }
   room.hostSocket = ws;
   room.sampleRate = sampleRate || 16000; // the mic's actual rate, not an assumption — see host.ts
   ws.on("message", (data, isBinary) => {
@@ -64,8 +76,13 @@ export function attachHost(room, ws, sampleRate) {
     room.audioBytesReceived += data.length;
     for (const entry of room.languages.values()) entry.session.sendAudio(data);
   });
-  ws.on("close", () => closeRoom(room));
-  ws.on("error", () => closeRoom(room));
+  const onHostGone = () => {
+    if (room.hostSocket !== ws) return; // a newer host connection already replaced this one
+    room.hostSocket = null;
+    room.hostGraceTimer = setTimeout(() => closeRoom(room), HOST_RECONNECT_GRACE_MS);
+  };
+  ws.on("close", onHostGone);
+  ws.on("error", onHostGone);
 }
 
 /** Joins a listener to a room+language, lazily opening the Soniox session for that language. */

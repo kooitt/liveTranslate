@@ -12,6 +12,8 @@ let micSocket: WebSocket | null = null;
 let previewSocket: WebSocket | null = null;
 let paused = false;
 let stopWaveform: (() => void) | null = null;
+let micReconnectTimer: number | undefined;
+let micReconnectAttempt = 0;
 
 export function initHostView(root: HTMLElement): void {
   root.classList.remove("wide");
@@ -266,14 +268,52 @@ function connectMic(
 ): void {
   audioCtx = audioContext;
   micStream = stream;
+
+  // Build the capture graph once, independent of the WebSocket. Audio
+  // keeps flowing locally even while the socket reconnects below —
+  // onaudioprocess reads the module-level `micSocket` on every callback,
+  // so sending resumes automatically the moment a new socket is OPEN.
+  const source = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  source.connect(analyser);
+  stopWaveform = attachMicWaveform(waveformCanvas, analyser);
+
+  // ponytail: ScriptProcessorNode is deprecated but keeps this to one
+  // inline function with no worklet file; upgrade path is
+  // AudioWorkletNode if browser support is ever dropped.
+  processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+  const mute = audioCtx.createGain();
+  mute.gain.value = 0; // keep the graph live without echoing audio to speakers
+
+  processorNode.onaudioprocess = (event) => {
+    if (paused || micSocket?.readyState !== WebSocket.OPEN) return;
+    const input = event.inputBuffer.getChannelData(0);
+    const pcm = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      const s = Math.max(-1, Math.min(1, input[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    micSocket!.send(pcm.buffer);
+  };
+
+  source.connect(processorNode);
+  processorNode.connect(mute);
+  mute.connect(audioCtx.destination);
+
+  openMicSocket(room, statusEl);
+}
+
+function openMicSocket(room: RoomInfo, statusEl: HTMLElement): void {
   // ponytail: AudioContext({sampleRate:16000}) is only a request — Safari/
   // iOS and some Android browsers ignore it and keep the hardware's native
   // rate (44100/48000). Tell the server the *actual* rate rather than
   // assuming it, or Soniox gets audio at the wrong speed/pitch and never
   // detects any speech, with no audio bytes ever missing and no error.
-  micSocket = new WebSocket(wsUrl(`/ws/host?room=${room.code}&sampleRate=${Math.round(audioContext.sampleRate)}`));
+  micSocket = new WebSocket(wsUrl(`/ws/host?room=${room.code}&sampleRate=${Math.round(audioCtx!.sampleRate)}`));
 
   micSocket.onopen = async () => {
+    window.clearTimeout(micReconnectTimer);
+    micReconnectAttempt = 0;
     // ponytail: re-resume defensively — some browsers re-suspend a context
     // that's been idle since it was created, even mid-session.
     await audioCtx!.resume();
@@ -282,36 +322,22 @@ function connectMic(
       return;
     }
     setStatus(statusEl, "live");
-
-    const source = audioCtx!.createMediaStreamSource(stream);
-    const analyser = audioCtx!.createAnalyser();
-    source.connect(analyser);
-    stopWaveform = attachMicWaveform(waveformCanvas, analyser);
-
-    // ponytail: ScriptProcessorNode is deprecated but keeps this to one
-    // inline function with no worklet file; upgrade path is
-    // AudioWorkletNode if browser support is ever dropped.
-    processorNode = audioCtx!.createScriptProcessor(4096, 1, 1);
-    const mute = audioCtx!.createGain();
-    mute.gain.value = 0; // keep the graph live without echoing audio to speakers
-
-    processorNode.onaudioprocess = (event) => {
-      if (paused || micSocket?.readyState !== WebSocket.OPEN) return;
-      const input = event.inputBuffer.getChannelData(0);
-      const pcm = new Int16Array(input.length);
-      for (let i = 0; i < input.length; i++) {
-        const s = Math.max(-1, Math.min(1, input[i]));
-        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      micSocket!.send(pcm.buffer);
-    };
-
-    source.connect(processorNode);
-    processorNode.connect(mute);
-    mute.connect(audioCtx!.destination);
   };
 
-  micSocket.onclose = () => setStatus(statusEl, "offline");
+  micSocket.onclose = () => {
+    // audioCtx is nulled by stopHosting() before it closes this socket —
+    // that's how we tell an intentional stop apart from a dropped
+    // connection worth retrying. Without this, a single transient drop
+    // (flaky network, host restart) silently killed translation for the
+    // rest of the session with no way back short of a full page reload.
+    if (!audioCtx) return;
+    setStatus(statusEl, "connecting", "Reconnecting");
+    micReconnectAttempt += 1;
+    micReconnectTimer = window.setTimeout(
+      () => openMicSocket(room, statusEl),
+      Math.min(1000 * 2 ** micReconnectAttempt, 10_000),
+    );
+  };
   micSocket.onerror = () => setStatus(statusEl, "error");
 }
 
@@ -348,6 +374,7 @@ function connectPreview(room: RoomInfo, langCode: string, root: HTMLElement): vo
 }
 
 function stopHosting(): void {
+  window.clearTimeout(micReconnectTimer);
   processorNode?.disconnect();
   processorNode = null;
   stopWaveform?.();
