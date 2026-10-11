@@ -7,7 +7,7 @@ import { createRoom, wsUrl, type RoomInfo } from "./rooms-api";
 
 let audioCtx: AudioContext | null = null;
 let micStream: MediaStream | null = null;
-let processorNode: ScriptProcessorNode | null = null;
+let workletNode: AudioWorkletNode | null = null;
 let micSocket: WebSocket | null = null;
 let previewSocket: WebSocket | null = null;
 let paused = false;
@@ -259,45 +259,43 @@ function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
-function connectMic(
+async function connectMic(
   room: RoomInfo,
   statusEl: HTMLElement,
   waveformCanvas: HTMLCanvasElement,
   audioContext: AudioContext,
   stream: MediaStream,
-): void {
+): Promise<void> {
   audioCtx = audioContext;
   micStream = stream;
 
   // Build the capture graph once, independent of the WebSocket. Audio
-  // keeps flowing locally even while the socket reconnects below —
-  // onaudioprocess reads the module-level `micSocket` on every callback,
-  // so sending resumes automatically the moment a new socket is OPEN.
+  // keeps flowing locally even while the socket reconnects below — the
+  // worklet's message handler reads the module-level `micSocket` on every
+  // callback, so sending resumes automatically the moment a new socket is
+  // OPEN.
   const source = audioCtx.createMediaStreamSource(stream);
   const analyser = audioCtx.createAnalyser();
   source.connect(analyser);
   stopWaveform = attachMicWaveform(waveformCanvas, analyser);
 
-  // ponytail: ScriptProcessorNode is deprecated but keeps this to one
-  // inline function with no worklet file; upgrade path is
-  // AudioWorkletNode if browser support is ever dropped.
-  processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+  try {
+    await audioCtx.audioWorklet.addModule(new URL("./pcm-worklet.js", import.meta.url));
+  } catch {
+    setStatus(statusEl, "error", "Audio processing unavailable in this browser — try Chrome or Edge");
+    return;
+  }
+  workletNode = new AudioWorkletNode(audioCtx, "pcm-processor");
   const mute = audioCtx.createGain();
   mute.gain.value = 0; // keep the graph live without echoing audio to speakers
 
-  processorNode.onaudioprocess = (event) => {
+  workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
     if (paused || micSocket?.readyState !== WebSocket.OPEN) return;
-    const input = event.inputBuffer.getChannelData(0);
-    const pcm = new Int16Array(input.length);
-    for (let i = 0; i < input.length; i++) {
-      const s = Math.max(-1, Math.min(1, input[i]));
-      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-    }
-    micSocket!.send(pcm.buffer);
+    micSocket.send(event.data);
   };
 
-  source.connect(processorNode);
-  processorNode.connect(mute);
+  source.connect(workletNode);
+  workletNode.connect(mute);
   mute.connect(audioCtx.destination);
 
   openMicSocket(room, statusEl);
@@ -375,8 +373,8 @@ function connectPreview(room: RoomInfo, langCode: string, root: HTMLElement): vo
 
 function stopHosting(): void {
   window.clearTimeout(micReconnectTimer);
-  processorNode?.disconnect();
-  processorNode = null;
+  workletNode?.disconnect();
+  workletNode = null;
   stopWaveform?.();
   stopWaveform = null;
   audioCtx?.close();
