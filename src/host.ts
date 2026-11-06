@@ -14,6 +14,7 @@ let paused = false;
 let stopWaveform: (() => void) | null = null;
 let micReconnectTimer: number | undefined;
 let micReconnectAttempt = 0;
+let hostVisibilityHandler: (() => void) | null = null;
 
 export function initHostView(root: HTMLElement): void {
   root.classList.remove("wide");
@@ -298,6 +299,22 @@ async function connectMic(
   workletNode.connect(mute);
   mute.connect(audioCtx.destination);
 
+  // ponytail: mobile browsers throttle or fully freeze setTimeout while a
+  // tab is hidden (e.g. the host's phone/tablet screen locks), so a dead
+  // socket's scheduled backoff retry can sit stalled far longer than its
+  // own delay. Force an immediate reconnect the moment the tab is visible
+  // again instead of trusting that stale timer to ever fire promptly.
+  hostVisibilityHandler = () => handleHostVisible(room, statusEl);
+  document.addEventListener("visibilitychange", hostVisibilityHandler);
+
+  openMicSocket(room, statusEl);
+}
+
+function handleHostVisible(room: RoomInfo, statusEl: HTMLElement): void {
+  if (document.visibilityState !== "visible" || !audioCtx) return;
+  if (micSocket && (micSocket.readyState === WebSocket.OPEN || micSocket.readyState === WebSocket.CONNECTING)) return;
+  window.clearTimeout(micReconnectTimer);
+  micReconnectAttempt = 0;
   openMicSocket(room, statusEl);
 }
 
@@ -373,6 +390,8 @@ function connectPreview(room: RoomInfo, langCode: string, root: HTMLElement): vo
 
 function stopHosting(): void {
   window.clearTimeout(micReconnectTimer);
+  if (hostVisibilityHandler) document.removeEventListener("visibilitychange", hostVisibilityHandler);
+  hostVisibilityHandler = null;
   workletNode?.disconnect();
   workletNode = null;
   stopWaveform?.();

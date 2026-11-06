@@ -269,7 +269,23 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
     }
   }
 
+  // ponytail: mobile browsers throttle or fully freeze setTimeout while a
+  // tab is hidden (e.g. the phone's screen locks), so a dead socket's
+  // scheduled backoff retry can sit stalled far longer than its own delay
+  // — the page just sits on "Reconnecting…" until manually refreshed.
+  // Force an immediate reconnect the moment the tab is visible again
+  // instead of trusting that stale timer to ever fire promptly.
+  function handleVisible() {
+    if (document.visibilityState !== "visible") return;
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+    window.clearTimeout(reconnectTimer);
+    reconnectAttempt = 0;
+    connect();
+  }
+  document.addEventListener("visibilitychange", handleVisible);
+
   function cleanup() {
+    document.removeEventListener("visibilitychange", handleVisible);
     window.clearTimeout(reconnectTimer);
     window.clearTimeout(noAudioTimer);
     pulse.stop();
