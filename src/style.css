@@ -427,10 +427,13 @@ a {
   flex-shrink: 0;
 }
 
-/* A panel expanded via the native Fullscreen API — big, centered,
-   auto-scrolling text so it can be projected straight from the console
-   without a separate display page. */
-.console-panel:fullscreen {
+/* A panel expanded to fill the screen — big, centered, auto-scrolling text
+   so it can be projected straight from the console without a separate
+   display page. `:fullscreen` is the native Fullscreen API; `.fake-fullscreen`
+   is the fallback for browsers with no Fullscreen API for ordinary elements
+   (iOS Safari), applied via fixed positioning instead — see fullscreen.ts. */
+.console-panel:fullscreen,
+.console-panel.fake-fullscreen {
   display: flex;
   flex-direction: column;
   width: 100vw;
@@ -439,14 +442,23 @@ a {
   background: var(--color-bg);
 }
 
-.console-panel:fullscreen .transcript-lines {
+.console-panel.fake-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.console-panel:fullscreen .transcript-lines,
+.console-panel.fake-fullscreen .transcript-lines {
   flex: 1;
   min-height: 0;
   max-height: none;
   justify-content: center;
 }
 
-.console-panel:fullscreen .transcript-line {
+.console-panel:fullscreen .transcript-line,
+.console-panel.fake-fullscreen .transcript-line {
   font-size: var(--text-translation);
   font-weight: 500;
   color: var(--color-text);

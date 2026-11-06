@@ -6,6 +6,7 @@ import { attachPulseWaveform } from "./waveform";
 import { icons } from "./icons";
 import { fetchRoomInfo, noAudioDiagnosis, wsUrl, type RoomInfo } from "./rooms-api";
 import { getDisplayMode, setDisplayMode, renderModeControl, type DisplayMode } from "./display-mode";
+import { wireFullscreenButtons } from "./fullscreen";
 
 interface TokenMsg {
   type: "tokens";
@@ -231,22 +232,10 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
     location.href = location.pathname;
   };
 
-  // Full screen uses the native Fullscreen API directly on a panel, so the
-  // source or translation panel can be projected without leaving this view.
-  root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
-    btn.onclick = () => {
-      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`)!;
-      if (document.fullscreenElement === panel) document.exitFullscreen();
-      else panel.requestFullscreen();
-    };
-  });
-  document.addEventListener("fullscreenchange", () => {
-    root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
-      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`);
-      const active = !!panel && document.fullscreenElement === panel;
-      btn.innerHTML = active ? icons.close : icons.expand;
-    });
-  });
+  // Full screen projects the source or translation panel without leaving
+  // this view (native Fullscreen API, or a CSS fallback where that's
+  // unsupported — see fullscreen.ts).
+  wireFullscreenButtons(root);
 
   let sourceText = "";
   let translationText = "";

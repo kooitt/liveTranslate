@@ -4,6 +4,7 @@ import { renderFeed } from "./transcript";
 import { attachMicWaveform } from "./waveform";
 import { icons } from "./icons";
 import { createRoom, wsUrl, type RoomInfo } from "./rooms-api";
+import { wireFullscreenButtons } from "./fullscreen";
 
 let audioCtx: AudioContext | null = null;
 let micStream: MediaStream | null = null;
@@ -212,23 +213,10 @@ function renderConsole(
     navigator.clipboard.writeText(joinLink);
   };
 
-  // Full screen uses the native Fullscreen API directly on a panel, so a
-  // panel showing the transcript or translation can be projected without
-  // ever leaving this console or opening a separate display page.
-  root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
-    btn.onclick = () => {
-      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`)!;
-      if (document.fullscreenElement === panel) document.exitFullscreen();
-      else panel.requestFullscreen();
-    };
-  });
-  document.addEventListener("fullscreenchange", () => {
-    root.querySelectorAll<HTMLButtonElement>(".fullscreen-btn").forEach((btn) => {
-      const panel = root.querySelector<HTMLElement>(`#${btn.dataset.target}`);
-      const active = !!panel && document.fullscreenElement === panel;
-      btn.innerHTML = active ? icons.close : icons.expand;
-    });
-  });
+  // Full screen projects the transcript or translation panel without ever
+  // leaving this console (native Fullscreen API, or a CSS fallback where
+  // that's unsupported — see fullscreen.ts).
+  wireFullscreenButtons(root);
 
   connectMic(room, statusEl, root.querySelector<HTMLCanvasElement>("#mic-waveform")!, audioContext, stream);
   connectPreview(room, previewLang.code, root);
