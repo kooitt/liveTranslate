@@ -3,8 +3,9 @@ import { setStatus } from "./status";
 import { renderFeed } from "./transcript";
 import { attachMicWaveform } from "./waveform";
 import { icons } from "./icons";
-import { createRoom, wsUrl, type RoomInfo } from "./rooms-api";
+import { startHostSession, stopHostSession, listRooms, wsUrl, type HostSessionInfo, type PublicRoom } from "./rooms-api";
 import { wireFullscreenButtons } from "./fullscreen";
+import { escapeHtml } from "./html";
 
 let audioCtx: AudioContext | null = null;
 let micStream: MediaStream | null = null;
@@ -22,14 +23,18 @@ export function initHostView(root: HTMLElement): void {
   renderSetup(root);
 }
 
-function renderSetup(root: HTMLElement): void {
+async function renderSetup(root: HTMLElement): Promise<void> {
   const langOptions = LANGUAGES.map((l) => `<option value="${l.code}">${l.englishName}</option>`).join("");
+  const rooms = await listRooms();
+  const previewOptions = rooms.length
+    ? rooms.map((r) => `<option value="${r.slug}">${escapeHtml(r.name)}</option>`).join("")
+    : '<option value="" disabled>No rooms configured yet</option>';
 
   root.innerHTML = `
     <div>
       <p class="panel-label">Operator console</p>
       <h1 class="landing-title">Start a live session</h1>
-      <p class="landing-tagline">Set up the session, then start speaking. Listeners each choose their own language.</p>
+      <p class="landing-tagline">Set up the session, then start speaking. Your speech is translated into every room configured in the <a href="/admin">admin dashboard</a>.</p>
 
       <form id="setup-form" class="setup-form">
         <div class="field">
@@ -44,9 +49,9 @@ function renderSetup(root: HTMLElement): void {
           </select>
         </div>
         <div class="field">
-          <label class="field-label" for="preview-language">Preview / translation language</label>
-          <select id="preview-language" class="field-select">
-            ${langOptions}
+          <label class="field-label" for="preview-room">Preview room</label>
+          <select id="preview-room" class="field-select">
+            ${previewOptions}
           </select>
         </div>
 
@@ -56,6 +61,8 @@ function renderSetup(root: HTMLElement): void {
             <canvas id="test-waveform" class="waveform hidden" width="160" height="28" aria-hidden="true"></canvas>
           </div>
         </div>
+
+        <p id="setup-error" class="state-message hidden" style="color:var(--color-error)"></p>
 
         <div class="btn-row">
           <button type="submit" class="btn btn-primary">Start session</button>
@@ -92,17 +99,19 @@ function renderSetup(root: HTMLElement): void {
     }
   };
 
+  const errorEl = root.querySelector<HTMLParagraphElement>("#setup-error")!;
   const submitBtn = root.querySelector<HTMLButtonElement>("#setup-form button[type=submit]")!;
   root.querySelector<HTMLFormElement>("#setup-form")!.onsubmit = async (e) => {
     e.preventDefault();
+    errorEl.classList.add("hidden");
     const name = (root.querySelector<HTMLInputElement>("#session-name")!).value;
     const sourceLanguage = (root.querySelector<HTMLSelectElement>("#source-language")!).value;
-    const previewLanguage = (root.querySelector<HTMLSelectElement>("#preview-language")!).value;
+    const previewSlug = (root.querySelector<HTMLSelectElement>("#preview-room")!).value;
 
     // ponytail: acquire mic + resume the AudioContext here, synchronously
-    // within the click's user-activation window — a slow room/WebSocket
-    // round trip (e.g. a cold-starting free host) can otherwise outlast
-    // that window, leaving the context stuck "suspended" with no error.
+    // within the click's user-activation window — a slow server round
+    // trip (e.g. a cold-starting free host) can otherwise outlast that
+    // window, leaving the context stuck "suspended" with no error.
     submitBtn.disabled = true;
     submitBtn.textContent = "Starting…";
     let stream: MediaStream;
@@ -118,28 +127,53 @@ function renderSetup(root: HTMLElement): void {
       return;
     }
 
-    const room = await createRoom(name, sourceLanguage);
-    renderConsole(root, room, previewLanguage, audioContext, stream);
+    try {
+      const session = await startHostSession(name, sourceLanguage);
+      renderConsole(root, session, previewSlug, rooms, audioContext, stream);
+    } catch (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Start session";
+      errorEl.textContent = err instanceof Error ? err.message : "Could not start session";
+      errorEl.classList.remove("hidden");
+      stream.getTracks().forEach((t) => t.stop());
+      audioContext.close();
+    }
   };
 }
 
 function renderConsole(
   root: HTMLElement,
-  room: RoomInfo,
-  previewLangCode: string,
+  session: HostSessionInfo,
+  initialPreviewSlug: string,
+  rooms: PublicRoom[],
   audioContext: AudioContext,
   stream: MediaStream,
 ): void {
   root.classList.add("wide");
-  const joinLink = `${location.origin}${location.pathname}?room=${room.code}`;
-  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=128x128&data=${encodeURIComponent(joinLink)}`;
-  const previewLang = LANGUAGES.find((l) => l.code === previewLangCode) ?? LANGUAGES[0];
+  const previewRoom = rooms.find((r) => r.slug === initialPreviewSlug) ?? rooms[0] ?? null;
+
+  const shareRows = rooms
+    .map((r) => {
+      const link = `${location.origin}/room/${r.slug}`;
+      const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=96x96&data=${encodeURIComponent(link)}`;
+      const lang = LANGUAGES.find((l) => l.code === r.targetLanguage)?.englishName ?? r.targetLanguage;
+      return `
+        <div class="join-row" style="margin-bottom: var(--space-3)">
+          <img class="qr-image" src="${qrSrc}" alt="QR code for the ${escapeHtml(r.name)} room" width="96" height="96" />
+          <div style="flex:1; min-width:0">
+            <p style="margin:0 0 var(--space-1); font-weight:600">${escapeHtml(r.name)} <span style="color:var(--color-muted); font-weight:400">(${escapeHtml(lang)})</span></p>
+            <div class="join-link" data-link="${link}">${link}</div>
+          </div>
+          <button type="button" class="btn btn-secondary copy-room-link" data-link="${link}">Copy</button>
+        </div>`;
+    })
+    .join("");
 
   root.innerHTML = `
     <div>
       <div class="shell-header" style="border:none; padding:0; margin-bottom: var(--space-4)">
         <div>
-          <p class="session-name">${escapeHtml(room.name)}</p>
+          <p class="session-name">${escapeHtml(session.name)}</p>
           <div id="console-status" style="margin-top: var(--space-1)"></div>
         </div>
         <button id="settings-btn" class="icon-btn" aria-label="Settings">${icons.settings}</button>
@@ -147,24 +181,16 @@ function renderConsole(
 
       <div id="settings-panel" class="settings-panel hidden">
         <div class="settings-row">
-          <span>Preview language</span>
-          <select id="preview-language-live" class="field-select" style="max-width:200px">
-            ${LANGUAGES.map((l) => `<option value="${l.code}" ${l.code === previewLang.code ? "selected" : ""}>${l.englishName}</option>`).join("")}
+          <span>Preview room</span>
+          <select id="preview-room-live" class="field-select" style="max-width:200px">
+            ${rooms.map((r) => `<option value="${r.slug}" ${r.slug === previewRoom?.slug ? "selected" : ""}>${escapeHtml(r.name)}</option>`).join("") || '<option value="">No rooms</option>'}
           </select>
         </div>
       </div>
 
       <div class="join-panel">
         <p class="panel-label">Share with listeners</p>
-        <div class="join-row">
-          <img class="qr-image" src="${qrSrc}" alt="QR code to join this session" width="128" height="128" />
-          <div style="flex:1; min-width:0">
-            <div class="join-link">${joinLink}</div>
-            <div class="btn-row" style="margin-top: var(--space-2); align-items: center">
-              <button id="copy-link" class="btn btn-secondary">Copy link</button>
-            </div>
-          </div>
-        </div>
+        ${rooms.length ? shareRows : '<p class="state-message">No rooms configured yet — add one in the <a href="/admin">admin dashboard</a> so listeners have somewhere to join.</p>'}
       </div>
 
       <hr class="divider" />
@@ -181,7 +207,7 @@ function renderConsole(
         </div>
         <div class="console-panel" id="translation-panel">
           <div class="panel-label-row">
-            <p class="panel-label">Translation (${escapeHtml(previewLang.englishName)})</p>
+            <p class="panel-label" id="translation-panel-label">Translation ${previewRoom ? `(${escapeHtml(previewRoom.name)})` : ""}</p>
             <button type="button" class="icon-btn fullscreen-btn" data-target="translation-panel" aria-label="View translation full screen">${icons.expand}</button>
           </div>
           <div id="translation-lines" class="transcript-lines translation-lines" style="min-height:120px">
@@ -209,24 +235,24 @@ function renderConsole(
   root.querySelector<HTMLButtonElement>("#settings-btn")!.onclick = () => {
     root.querySelector("#settings-panel")!.classList.toggle("hidden");
   };
-  root.querySelector<HTMLButtonElement>("#copy-link")!.onclick = () => {
-    navigator.clipboard.writeText(joinLink);
-  };
+  root.querySelectorAll<HTMLButtonElement>(".copy-room-link").forEach((btn) => {
+    btn.onclick = () => navigator.clipboard.writeText(btn.dataset.link!);
+  });
 
   // Full screen projects the transcript or translation panel without ever
   // leaving this console (native Fullscreen API, or a CSS fallback where
   // that's unsupported — see fullscreen.ts).
   wireFullscreenButtons(root);
 
-  connectMic(room, statusEl, root.querySelector<HTMLCanvasElement>("#mic-waveform")!, audioContext, stream);
-  connectPreview(room, previewLang.code, root);
+  connectMic(session, statusEl, root.querySelector<HTMLCanvasElement>("#mic-waveform")!, audioContext, stream);
+  if (previewRoom) connectPreview(previewRoom.slug, root);
 
-  root.querySelector<HTMLSelectElement>("#preview-language-live")!.onchange = (e) => {
-    const code = (e.target as HTMLSelectElement).value;
+  root.querySelector<HTMLSelectElement>("#preview-room-live")!.onchange = (e) => {
+    const slug = (e.target as HTMLSelectElement).value;
     previewSocket?.close();
-    root.querySelector("#translation-panel .panel-label")!.textContent =
-      `Translation (${LANGUAGES.find((l) => l.code === code)?.englishName ?? code})`;
-    connectPreview(room, code, root);
+    const room = rooms.find((r) => r.slug === slug);
+    root.querySelector("#translation-panel-label")!.textContent = `Translation ${room ? `(${room.name})` : ""}`;
+    if (room) connectPreview(room.slug, root);
   };
 
   const pauseBtn = root.querySelector<HTMLButtonElement>("#pause-btn")!;
@@ -236,20 +262,15 @@ function renderConsole(
     setStatus(statusEl, paused ? "connecting" : "live", paused ? "Paused" : undefined);
   };
 
-  root.querySelector<HTMLButtonElement>("#stop-btn")!.onclick = () => {
+  root.querySelector<HTMLButtonElement>("#stop-btn")!.onclick = async () => {
     stopHosting();
+    await stopHostSession(session.id);
     location.reload();
   };
 }
 
-function escapeHtml(text: string): string {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 async function connectMic(
-  room: RoomInfo,
+  session: HostSessionInfo,
   statusEl: HTMLElement,
   waveformCanvas: HTMLCanvasElement,
   audioContext: AudioContext,
@@ -292,27 +313,27 @@ async function connectMic(
   // socket's scheduled backoff retry can sit stalled far longer than its
   // own delay. Force an immediate reconnect the moment the tab is visible
   // again instead of trusting that stale timer to ever fire promptly.
-  hostVisibilityHandler = () => handleHostVisible(room, statusEl);
+  hostVisibilityHandler = () => handleHostVisible(session, statusEl);
   document.addEventListener("visibilitychange", hostVisibilityHandler);
 
-  openMicSocket(room, statusEl);
+  openMicSocket(session, statusEl);
 }
 
-function handleHostVisible(room: RoomInfo, statusEl: HTMLElement): void {
+function handleHostVisible(session: HostSessionInfo, statusEl: HTMLElement): void {
   if (document.visibilityState !== "visible" || !audioCtx) return;
   if (micSocket && (micSocket.readyState === WebSocket.OPEN || micSocket.readyState === WebSocket.CONNECTING)) return;
   window.clearTimeout(micReconnectTimer);
   micReconnectAttempt = 0;
-  openMicSocket(room, statusEl);
+  openMicSocket(session, statusEl);
 }
 
-function openMicSocket(room: RoomInfo, statusEl: HTMLElement): void {
+function openMicSocket(session: HostSessionInfo, statusEl: HTMLElement): void {
   // ponytail: AudioContext({sampleRate:16000}) is only a request — Safari/
   // iOS and some Android browsers ignore it and keep the hardware's native
   // rate (44100/48000). Tell the server the *actual* rate rather than
   // assuming it, or Soniox gets audio at the wrong speed/pitch and never
   // detects any speech, with no audio bytes ever missing and no error.
-  micSocket = new WebSocket(wsUrl(`/ws/host?room=${room.code}&sampleRate=${Math.round(audioCtx!.sampleRate)}`));
+  micSocket = new WebSocket(wsUrl(`/ws/host?session=${session.id}&sampleRate=${Math.round(audioCtx!.sampleRate)}`));
 
   micSocket.onopen = async () => {
     window.clearTimeout(micReconnectTimer);
@@ -337,20 +358,20 @@ function openMicSocket(room: RoomInfo, statusEl: HTMLElement): void {
     setStatus(statusEl, "connecting", "Reconnecting");
     micReconnectAttempt += 1;
     micReconnectTimer = window.setTimeout(
-      () => openMicSocket(room, statusEl),
+      () => openMicSocket(session, statusEl),
       Math.min(1000 * 2 ** micReconnectAttempt, 10_000),
     );
   };
   micSocket.onerror = () => setStatus(statusEl, "error");
 }
 
-function connectPreview(room: RoomInfo, langCode: string, root: HTMLElement): void {
+function connectPreview(roomSlug: string, root: HTMLElement): void {
   const transcriptEl = root.querySelector<HTMLDivElement>("#transcript-lines")!;
   const translationEl = root.querySelector<HTMLDivElement>("#translation-lines")!;
   let sourceText = "";
   let translationText = "";
 
-  previewSocket = new WebSocket(wsUrl(`/ws/listen?room=${room.code}&lang=${langCode}`));
+  previewSocket = new WebSocket(wsUrl(`/ws/listen?slug=${encodeURIComponent(roomSlug)}`));
   previewSocket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type !== "tokens") return;

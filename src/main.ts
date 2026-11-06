@@ -1,36 +1,34 @@
 import "./style.css";
 import { initHostView } from "./host";
 import { initListenView } from "./listen";
-import { initDisplayView } from "./display";
+import { initAdminView } from "./admin";
 import { initThemeToggle } from "./theme";
 import { icons } from "./icons";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app")!;
-const params = new URLSearchParams(location.search);
-const displayCode = params.get("display");
-const roomFromLink = params.get("room") ?? "";
+const path = location.pathname;
+const roomMatch = path.match(/^\/room\/([^/]+)\/?$/);
+const isAdmin = path === "/admin" || path.startsWith("/admin/");
 
-if (displayCode) {
-  // Event display mode gets zero chrome — no header, no theme toggle.
-  initDisplayView(appRoot, displayCode, params.get("lang") ?? "en", params.get("mode"));
+appRoot.innerHTML = `
+  <header class="shell-header">
+    <a href="/" class="brand">Verba<span class="brand-dot">·</span>Live</a>
+    <div class="shell-header-right">
+      <button id="theme-toggle" class="icon-btn"></button>
+    </div>
+  </header>
+  <main id="main" class="shell-main"></main>
+`;
+initThemeToggle(document.querySelector<HTMLButtonElement>("#theme-toggle")!, icons);
+
+const main = document.querySelector<HTMLDivElement>("#main")!;
+
+if (isAdmin) {
+  initAdminView(main);
+} else if (roomMatch) {
+  initListenView(main, decodeURIComponent(roomMatch[1]));
 } else {
-  appRoot.innerHTML = `
-    <header class="shell-header">
-      <a href="${location.pathname}" class="brand">Verba<span class="brand-dot">·</span>Live</a>
-      <div class="shell-header-right">
-        <button id="theme-toggle" class="icon-btn"></button>
-      </div>
-    </header>
-    <main id="main" class="shell-main"></main>
-  `;
-  initThemeToggle(document.querySelector<HTMLButtonElement>("#theme-toggle")!, icons);
-
-  const main = document.querySelector<HTMLDivElement>("#main")!;
-  if (roomFromLink) {
-    initListenView(main, roomFromLink);
-  } else {
-    renderLanding(main);
-  }
+  renderLanding(main);
 }
 
 function renderLanding(main: HTMLElement): void {
@@ -39,13 +37,11 @@ function renderLanding(main: HTMLElement): void {
     <h1 class="landing-title">Real-time speech, translated instantly.</h1>
     <p class="landing-tagline">
       One speaker. Any number of listeners. Each person hears the translation
-      in their own language, live.
+      in their own language, live — via their room's permanent link or QR code.
     </p>
     <div class="btn-row">
       <button id="host-btn" class="btn btn-primary">Host a session</button>
-      <button id="join-btn" class="btn btn-secondary">Join a session</button>
     </div>
   `;
   main.querySelector<HTMLButtonElement>("#host-btn")!.onclick = () => initHostView(main);
-  main.querySelector<HTMLButtonElement>("#join-btn")!.onclick = () => initListenView(main, "");
 }

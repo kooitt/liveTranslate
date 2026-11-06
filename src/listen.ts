@@ -1,4 +1,4 @@
-import { LANGUAGES, type LanguageOption } from "./languages";
+import { findLanguage } from "./languages";
 import { isSpeechEnabled, setSpeechEnabled, setSpeechVolume, getSpeechVolume, speak } from "./tts";
 import { setStatus, friendlyDisconnectMessage, type ConnState } from "./status";
 import { renderFeed } from "./transcript";
@@ -7,6 +7,7 @@ import { icons } from "./icons";
 import { fetchRoomInfo, noAudioDiagnosis, wsUrl, type RoomInfo } from "./rooms-api";
 import { getDisplayMode, setDisplayMode, renderModeControl, type DisplayMode } from "./display-mode";
 import { wireFullscreenButtons } from "./fullscreen";
+import { escapeHtml } from "./html";
 
 interface TokenMsg {
   type: "tokens";
@@ -17,131 +18,50 @@ let socket: WebSocket | null = null;
 let reconnectTimer: number | undefined;
 let reconnectAttempt = 0;
 
-export function initListenView(root: HTMLElement, initialCode: string): void {
+/** Each room now has one permanent URL (`/room/<slug>`) and one fixed
+ * target language — there's nothing left for a listener to pick, so this
+ * goes straight from "look up the room" to the live screen. */
+export async function initListenView(root: HTMLElement, slug: string): Promise<void> {
   root.classList.remove("wide");
-  renderJoinScreen(root, initialCode);
-}
 
-function renderJoinScreen(root: HTMLElement, initialCode: string): void {
+  if (!slug) {
+    renderNotFound(root, "No room specified. Use the link or QR code your organizer shared.");
+    return;
+  }
+
   root.innerHTML = `
-    <div>
-      <p class="panel-label">Join live translation</p>
-      <h1 class="landing-title">Join a session</h1>
-      <div class="field">
-        <label class="field-label" for="code-input">Session code</label>
-        <input id="code-input" class="field-input" placeholder="e.g. a1b2c3" maxlength="12" value="${initialCode}" autocomplete="off" />
-      </div>
-      <div id="join-status" class="state-block hidden"></div>
-      <div id="lang-section" class="hidden">
-        <p class="field-label">Choose your language</p>
-        <div id="quick-lang-list" class="lang-list" role="listbox" aria-label="Common languages"></div>
-        <details class="lang-more">
-          <summary class="field-label">More languages ${icons.chevronDown}</summary>
-          <div id="lang-list" class="lang-list" role="listbox" aria-label="More languages" style="margin-top: var(--space-2)"></div>
-        </details>
-        <div class="btn-row" style="margin-top: var(--space-5)">
-          <button id="start-listening" class="btn btn-primary" disabled>Start listening</button>
-        </div>
-      </div>
+    <div class="state-block">
+      <p class="state-activity"><span class="status-dot"></span>Looking up room…</p>
     </div>
   `;
 
-  const codeInput = root.querySelector<HTMLInputElement>("#code-input")!;
-  const joinStatus = root.querySelector<HTMLDivElement>("#join-status")!;
-  const langSection = root.querySelector<HTMLDivElement>("#lang-section")!;
-  const quickLangList = root.querySelector<HTMLDivElement>("#quick-lang-list")!;
-  const langList = root.querySelector<HTMLDivElement>("#lang-list")!;
-  const startBtn = root.querySelector<HTMLButtonElement>("#start-listening")!;
-
-  let selected: LanguageOption | null = null;
-  let currentInfo: RoomInfo | null = null;
-
-  // ponytail: most listeners pick one of a handful of languages — surface
-  // those as a short tappable row up front so nobody has to scroll a long
-  // list on a phone, and tuck everything else behind a native <details>.
-  const COMMON_CODES = ["en", "zh", "ms", "ta"];
-  function addLangButton(container: HTMLElement, lang: LanguageOption): void {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "lang-option";
-    btn.setAttribute("role", "option");
-    btn.setAttribute("aria-pressed", "false");
-    btn.innerHTML = `<span>${lang.name}</span><span class="english-name">${lang.englishName}</span>`;
-    btn.onclick = () => {
-      selected = lang;
-      startBtn.disabled = false;
-      root.querySelectorAll(".lang-option").forEach((el) => el.setAttribute("aria-pressed", "false"));
-      btn.setAttribute("aria-pressed", "true");
-    };
-    container.appendChild(btn);
-  }
-  for (const code of COMMON_CODES) {
-    const lang = LANGUAGES.find((l) => l.code === code);
-    if (lang) addLangButton(quickLangList, lang);
-  }
-  for (const lang of LANGUAGES) {
-    if (!COMMON_CODES.includes(lang.code)) addLangButton(langList, lang);
+  const room = await fetchRoomInfo(slug);
+  if (!room) {
+    renderNotFound(root, "Room not found. Check the link and try again.");
+    return;
   }
 
-  async function lookupRoom(code: string) {
-    if (!code) {
-      langSection.classList.add("hidden");
-      joinStatus.classList.add("hidden");
-      return;
-    }
-    joinStatus.classList.remove("hidden");
-    joinStatus.innerHTML = `<span class="state-activity">${statusPulse()} Looking up session…</span>`;
-    const info = await fetchRoomInfo(code);
-    if (!info) {
-      currentInfo = null;
-      langSection.classList.add("hidden");
-      joinStatus.innerHTML = `
-        <p class="state-title">Session not found</p>
-        <p class="state-message">Check the code and try again.</p>
-      `;
-      return;
-    }
-    currentInfo = info;
-    joinStatus.innerHTML = `
-      <p class="session-name">${escapeHtml(info.name)}</p>
-      <div style="margin-top: var(--space-2)">${info.live ? liveBadge() : offlineBadge()}</div>
-    `;
-    langSection.classList.remove("hidden");
-  }
+  renderLiveScreen(root, room);
+}
 
-  function statusPulse() {
-    return '<span class="status-dot"></span>';
-  }
-  function liveBadge() {
-    return '<span class="status status-live"><span class="status-dot"></span>Live</span>';
-  }
-  function offlineBadge() {
-    return '<span class="status status-offline"><span class="status-dot"></span>Waiting for speaker</span>';
-  }
+function renderNotFound(root: HTMLElement, message: string): void {
+  root.innerHTML = `
+    <div class="state-block">
+      <p class="state-title">Room not found</p>
+      <p class="state-message">${escapeHtml(message)}</p>
+    </div>
+  `;
+}
 
-  let debounce: number | undefined;
-  codeInput.addEventListener("input", () => {
-    window.clearTimeout(debounce);
-    debounce = window.setTimeout(() => lookupRoom(codeInput.value.trim()), 350);
-  });
-
-  startBtn.onclick = () => {
-    if (!selected || !currentInfo) return;
-    renderLiveScreen(root, currentInfo, selected);
+function renderLiveScreen(root: HTMLElement, room: RoomInfo): void {
+  const lang = findLanguage(room.targetLanguage) ?? {
+    code: room.targetLanguage,
+    name: room.targetLanguage,
+    englishName: room.targetLanguage,
+    bcp47: "en-US",
   };
-
-  if (initialCode) lookupRoom(initialCode);
-}
-
-function escapeHtml(text: string): string {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOption): void {
   const sourceName = room.sourceLanguage
-    ? LANGUAGES.find((l) => l.code === room.sourceLanguage)?.englishName ?? room.sourceLanguage
+    ? findLanguage(room.sourceLanguage)?.englishName ?? room.sourceLanguage
     : "Speaker";
 
   root.innerHTML = `
@@ -151,7 +71,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
         <button id="leave-btn" class="btn btn-ghost">Leave</button>
       </div>
       <p class="session-name">${escapeHtml(room.name)}</p>
-      <p class="language-pair"><strong>${sourceName}</strong> → <strong>${lang.englishName}</strong></p>
+      <p class="language-pair"><strong>${escapeHtml(sourceName)}</strong> → <strong>${escapeHtml(lang.englishName)}</strong></p>
 
       <hr class="divider" />
 
@@ -229,7 +149,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
 
   root.querySelector<HTMLButtonElement>("#leave-btn")!.onclick = () => {
     cleanup();
-    location.href = location.pathname;
+    location.href = "/";
   };
 
   // Full screen projects the source or translation panel without leaving
@@ -254,7 +174,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
     sourcePanel.classList.toggle("hidden", !hasSource && displayMode === "both");
     if (displayMode === "source" && !hasSource) {
       sourceLinesEl.innerHTML =
-        '<p class="state-message">No separate source text — this session\'s spoken language matches your translation language.</p>';
+        '<p class="state-message">No separate source text — this room\'s spoken language matches your translation language.</p>';
     }
   }
 
@@ -284,7 +204,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
 
   function connect() {
     setStatus(statusEl, "connecting");
-    socket = new WebSocket(wsUrl(`/ws/listen?room=${encodeURIComponent(room.code)}&lang=${lang.code}`));
+    socket = new WebSocket(wsUrl(`/ws/listen?slug=${encodeURIComponent(room.slug)}`));
 
     socket.onopen = () => {
       reconnectAttempt = 0;
@@ -292,7 +212,7 @@ function renderLiveScreen(root: HTMLElement, room: RoomInfo, lang: LanguageOptio
       window.clearTimeout(noAudioTimer);
       noAudioTimer = window.setTimeout(async () => {
         if (hasContent) return;
-        emptyState.querySelector(".state-message")!.textContent = await noAudioDiagnosis(room.code);
+        emptyState.querySelector(".state-message")!.textContent = await noAudioDiagnosis(room.slug);
       }, 10_000);
     };
 
