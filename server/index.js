@@ -269,7 +269,7 @@ server.on("upgrade", (req, socket, head) => {
       return;
     }
     const sampleRate = Number(url.searchParams.get("sampleRate")) || 16000;
-    wss.handleUpgrade(req, socket, head, (ws) => attachHost(sessionId, ws, sampleRate));
+    wss.handleUpgrade(req, socket, head, (ws) => attachHost(sessionId, ws, sampleRate, SONIOX_API_KEY));
     return;
   }
 

@@ -145,7 +145,7 @@ export async function startHostSession({ name, sourceLanguage }) {
 }
 
 /** Wires a host's mic WebSocket to fan its audio into every room's active session. */
-export function attachHost(sessionId, ws, sampleRate) {
+export function attachHost(sessionId, ws, sampleRate, apiKey) {
   if (!liveSession || liveSession.id !== sessionId) {
     ws.close(1008, "No matching live session");
     return;
@@ -156,10 +156,15 @@ export function attachHost(sessionId, ws, sampleRate) {
   }
   liveSession.hostSocket = ws;
   liveSession.sampleRate = sampleRate || 16000;
+  // Now that the real sample rate (and this session's language hints) are
+  // actually known, open sessions for any rooms whose listeners have been
+  // sitting in "waiting for speech" — see activateWaitingRooms for why
+  // this can't just happen whenever the first listener joins.
+  activateWaitingRooms(apiKey).catch((err) => console.error("activateWaitingRooms failed:", err));
   ws.on("message", (data, isBinary) => {
     if (!isBinary || !liveSession) return;
     liveSession.audioBytesReceived += data.length;
-    for (const entry of roomSessions.values()) entry.session.sendAudio(data);
+    for (const entry of roomSessions.values()) entry.session?.sendAudio(data);
   });
   const onHostGone = () => {
     if (!liveSession || liveSession.hostSocket !== ws) return; // a newer host connection already replaced this one
@@ -191,7 +196,7 @@ function closeRoomSession(roomId, listenerMessage) {
   const entry = roomSessions.get(roomId);
   if (!entry) return;
   roomSessions.delete(roomId);
-  entry.session.close();
+  entry.session?.close();
   for (const listener of entry.listeners) {
     if (listener.readyState === listener.OPEN) {
       listener.send(JSON.stringify({ type: "error", message: listenerMessage }));
@@ -200,32 +205,36 @@ function closeRoomSession(roomId, listenerMessage) {
   }
 }
 
-/** Joins a listener to a permanent room, lazily opening that room's Soniox session. */
-export function joinListener(room, ws, apiKey) {
-  let entry = roomSessions.get(room.id);
-  if (!entry) {
-    entry = { session: null, listeners: new Set() };
-    roomSessions.set(room.id, entry);
-    entry.session = openSonioxSession({
-      apiKey,
-      targetLanguage: room.targetLanguage,
-      sampleRate: liveSession?.sampleRate || 16000,
-      languageHints: liveSession?.sourceLanguage ? [liveSession.sourceLanguage] : undefined,
-      onTokens: (tokens) => {
-        const payload = JSON.stringify({ type: "tokens", tokens });
-        for (const listener of entry.listeners) {
-          if (listener.readyState === listener.OPEN) listener.send(payload);
-        }
-      },
-      onError: (err) => {
-        const payload = JSON.stringify({ type: "error", message: err.error_message });
-        for (const listener of entry.listeners) {
-          if (listener.readyState === listener.OPEN) listener.send(payload);
-        }
-      },
-      onClose: ({ intentional, hadError }) => {
-        roomSessions.delete(room.id);
-        if (intentional || hadError) return;
+/** Actually opens a room's Soniox session — only called once liveSession's
+ * real sample rate/hints are known, never speculatively. */
+function openRoomSession(room, entry, apiKey) {
+  entry.session = openSonioxSession({
+    apiKey,
+    targetLanguage: room.targetLanguage,
+    sampleRate: liveSession?.sampleRate || 16000,
+    languageHints: liveSession?.sourceLanguage ? [liveSession.sourceLanguage] : undefined,
+    onTokens: (tokens) => {
+      const payload = JSON.stringify({ type: "tokens", tokens });
+      for (const listener of entry.listeners) {
+        if (listener.readyState === listener.OPEN) listener.send(payload);
+      }
+    },
+    onError: (err) => {
+      const payload = JSON.stringify({ type: "error", message: err.error_message });
+      for (const listener of entry.listeners) {
+        if (listener.readyState === listener.OPEN) listener.send(payload);
+      }
+    },
+    onClose: ({ hadError }) => {
+      // Someone else (closeRoomSession, via a room edit/delete or the host
+      // stopping) may have already replaced this entry entirely — don't
+      // clobber whatever is there now.
+      if (roomSessions.get(room.id) !== entry) return;
+      roomSessions.delete(room.id);
+      entry.session = null;
+      if (!hadError) {
+        // A clean-but-unannounced close is still unexpected here — nothing
+        // else is going to reopen this room's session on its own.
         const payload = JSON.stringify({
           type: "error",
           message: "Translation session ended unexpectedly. Please reload to reconnect.",
@@ -233,15 +242,49 @@ export function joinListener(room, ws, apiKey) {
         for (const listener of entry.listeners) {
           if (listener.readyState === listener.OPEN) listener.send(payload);
         }
-      },
-    });
+      }
+      // Either way, force a reconnect rather than leaving listeners sitting
+      // on a socket that will never receive another token.
+      for (const listener of entry.listeners) listener.close();
+    },
+  });
+}
+
+/** Opens sessions for any rooms whose listeners joined before a host was
+ * live — see attachHost. Opening eagerly on first-listener-join would lock
+ * in whatever sample rate/hints happened to be true at that moment (often
+ * none, since people commonly open a room and wait before the host
+ * starts), silently corrupting transcription/translation for the entire
+ * event instead of just failing loudly. */
+async function activateWaitingRooms(apiKey) {
+  for (const [roomId, entry] of roomSessions) {
+    if (entry.session || entry.listeners.size === 0) continue;
+    const room = await getRoomById(roomId);
+    if (!room) {
+      roomSessions.delete(roomId); // room was deleted while listeners waited
+      continue;
+    }
+    openRoomSession(room, entry, apiKey);
+  }
+}
+
+/** Joins a listener to a permanent room. Opens that room's Soniox session
+ * immediately only if a host is already live; otherwise the listener just
+ * waits (as the client already shows) until activateWaitingRooms opens it
+ * with the correct parameters once a host actually attaches. */
+export function joinListener(room, ws, apiKey) {
+  let entry = roomSessions.get(room.id);
+  if (!entry) {
+    entry = { session: null, listeners: new Set() };
+    roomSessions.set(room.id, entry);
   }
   entry.listeners.add(ws);
+  if (liveSession && !entry.session) openRoomSession(room, entry, apiKey);
 
   ws.on("close", () => {
     entry.listeners.delete(ws);
     if (entry.listeners.size === 0) {
-      entry.session.close();
+      entry.session?.close();
       roomSessions.delete(room.id);
     }
   });
