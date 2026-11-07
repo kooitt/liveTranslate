@@ -187,7 +187,10 @@ function renderDashboard(root: HTMLElement, email: string): void {
         </div>
         <div class="field">
           <label class="field-label" for="room-lang">Target language</label>
-          <select id="room-lang" class="field-select">${langOptions}</select>
+          <select id="room-lang" class="field-select" required>
+            ${room ? "" : '<option value="" disabled selected>Choose a language…</option>'}
+            ${langOptions}
+          </select>
         </div>
         <p id="room-form-error" class="state-message hidden" style="color:var(--color-error)"></p>
         <div class="btn-row">
