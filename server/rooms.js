@@ -214,6 +214,7 @@ function openRoomSession(room, entry, apiKey) {
     sampleRate: liveSession?.sampleRate || 16000,
     languageHints: liveSession?.sourceLanguage ? [liveSession.sourceLanguage] : undefined,
     onTokens: (tokens) => {
+      entry.retryDelay = 0; // tokens flowing — this session is healthy again
       const payload = JSON.stringify({ type: "tokens", tokens });
       for (const listener of entry.listeners) {
         if (listener.readyState === listener.OPEN) listener.send(payload);
@@ -225,27 +226,39 @@ function openRoomSession(room, entry, apiKey) {
         if (listener.readyState === listener.OPEN) listener.send(payload);
       }
     },
-    onClose: ({ hadError }) => {
+    onClose: () => {
       // Someone else (closeRoomSession, via a room edit/delete or the host
       // stopping) may have already replaced this entry entirely — don't
       // clobber whatever is there now.
       if (roomSessions.get(room.id) !== entry) return;
-      roomSessions.delete(room.id);
       entry.session = null;
-      if (!hadError) {
-        // A clean-but-unannounced close is still unexpected here — nothing
-        // else is going to reopen this room's session on its own.
-        const payload = JSON.stringify({
-          type: "error",
-          message: "Translation session ended unexpectedly. Please reload to reconnect.",
-        });
-        for (const listener of entry.listeners) {
-          if (listener.readyState === listener.OPEN) listener.send(payload);
-        }
+
+      // ponytail: Soniox's own real-time sessions can drop on their own
+      // after a while even with everything configured correctly (seen in
+      // practice after a room has been translating fine for a bit) — this
+      // isn't something our audio pipeline can prevent. The fix is to
+      // reopen a fresh upstream session transparently here, reusing the
+      // same `entry` and the same listener sockets, rather than forcing
+      // every listener's (and the host's own preview's) connection to
+      // *us* to drop and reconnect for a problem that was never on their
+      // end — that just trades one dead-looking screen for a flashing
+      // "Connection interrupted. Reconnecting..." one.
+      if (!liveSession || entry.listeners.size === 0) {
+        // Nothing left to reconnect for — let listeners settle back into
+        // "waiting for speech" instead of silently retrying forever.
+        roomSessions.delete(room.id);
+        for (const listener of entry.listeners) listener.close();
+        return;
       }
-      // Either way, force a reconnect rather than leaving listeners sitting
-      // on a socket that will never receive another token.
-      for (const listener of entry.listeners) listener.close();
+      entry.retryDelay = Math.min((entry.retryDelay || 1000) * 2, 15_000);
+      setTimeout(() => {
+        if (roomSessions.get(room.id) !== entry) return; // torn down while we waited
+        if (!liveSession || entry.listeners.size === 0) {
+          roomSessions.delete(room.id);
+          return;
+        }
+        openRoomSession(room, entry, apiKey);
+      }, entry.retryDelay);
     },
   });
 }
